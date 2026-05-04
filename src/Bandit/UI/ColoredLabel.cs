@@ -1,9 +1,7 @@
-using System.Text;
-using Terminal.Gui.Drawing;
+namespace Bandit.UI;
+
 using Terminal.Gui.ViewBase;
 using Attribute = Terminal.Gui.Drawing.Attribute;
-
-namespace Bandit.UI;
 
 public sealed class ColoredLabel : View
 {

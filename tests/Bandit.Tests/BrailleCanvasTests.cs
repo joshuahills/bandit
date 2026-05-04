@@ -1,7 +1,7 @@
+namespace Bandit.Tests;
+
 using Bandit.UI.Rendering;
 using Xunit;
-
-namespace Bandit.Tests;
 
 public class BrailleCanvasTests
 {

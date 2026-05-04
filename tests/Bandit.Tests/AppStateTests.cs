@@ -1,6 +1,6 @@
-using Xunit;
-
 namespace Bandit.Tests;
+
+using Xunit;
 
 public class AppStateTests
 {
