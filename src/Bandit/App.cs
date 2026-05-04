@@ -169,12 +169,20 @@ public sealed class App(AppState state) : IDisposable
         });
 
         var latest = _system.Samples.Latest();
-        string rates = latest is { } s
-            ? $" ↑ {BandwidthChart.FormatBytesPerSec(s.BytesOut)}/s  ↓ {BandwidthChart.FormatBytesPerSec(s.BytesIn)}/s "
-            : " ↑ ---  ↓ --- ";
-        bar.Add(new ColoredLabel(rates, Theme.AccentAttr)
+        string up = latest is { } sUp
+            ? $" ↑ {BandwidthChart.FormatBytesPerSec(sUp.BytesOut)}/s "
+            : " ↑ --- ";
+        string down = latest is { } sDown
+            ? $" ↓ {BandwidthChart.FormatBytesPerSec(sDown.BytesIn)}/s "
+            : " ↓ --- ";
+        int ratesLength = up.Length + down.Length;
+        bar.Add(new ColoredLabel(up, Theme.UploadAttr)
         {
-            X = Pos.AnchorEnd(rates.Length), Y = 0, Width = rates.Length,
+            X = Pos.AnchorEnd(ratesLength), Y = 0, Width = up.Length,
+        });
+        bar.Add(new ColoredLabel(down, Theme.DownloadAttr)
+        {
+            X = Pos.AnchorEnd(down.Length), Y = 0, Width = down.Length,
         });
 
         return bar;
