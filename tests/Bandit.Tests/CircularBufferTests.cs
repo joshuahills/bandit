@@ -96,27 +96,36 @@ public class CircularBufferTests
     [Fact]
     public async Task Concurrent_Add_and_TailN_does_not_corrupt_or_throw()
     {
-        var buf = new CircularBuffer<int>(1024);
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        const int capacity = 1024;
+        var buf = new CircularBuffer<int>(capacity);
+        using var hardTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var stop = new CancellationTokenSource();
 
         var writer = Task.Run(() =>
         {
             int i = 0;
-            while (!cts.IsCancellationRequested) buf.Add(i++);
+            while (!stop.IsCancellationRequested) buf.Add(i++);
         });
 
         var reader = Task.Run(() =>
         {
-            while (!cts.IsCancellationRequested)
+            while (!stop.IsCancellationRequested)
             {
                 _ = buf.TailN(100);
                 _ = buf.Latest();
             }
         });
 
+        // Wait until the writer has filled the buffer (deterministic), or bail out
+        // after a generous overall timeout if something is wrong.
+        while (buf.Count < capacity && !hardTimeout.IsCancellationRequested)
+            await Task.Delay(10, hardTimeout.Token);
+
+        stop.Cancel();
         await Task.WhenAll(writer, reader);
 
-        // No exceptions = success. Buffer should be at capacity since writer ran continuously.
-        Assert.Equal(1024, buf.Count);
+        // No exceptions = primary success criterion. The buffer should also be at
+        // capacity once the writer has been running long enough to fill it.
+        Assert.Equal(capacity, buf.Count);
     }
 }
