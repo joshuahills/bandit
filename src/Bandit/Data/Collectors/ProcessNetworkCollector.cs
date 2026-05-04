@@ -9,6 +9,13 @@ public sealed class ProcessNetworkCollector : INetworkCollector, IDisposable
     public CircularBuffer<ProcessNetworkInfo[]> Snapshots { get; } = new(3_600);
     public bool IsAvailable { get; }
 
+    public CollectorStatus Status { get; private set; } = CollectorStatus.NotStarted;
+    public string? StartError { get; private set; }
+    public long RawEventsSeen => Interlocked.Read(ref _rawEvents);
+    public long DecodedEventsSeen => Interlocked.Read(ref _decodedEvents);
+
+    private long _rawEvents;
+    private long _decodedEvents;
     private readonly Dictionary<int, long> _runningIn = [];
     private readonly Dictionary<int, long> _runningOut = [];
     private readonly Lock _lock = new();
@@ -21,15 +28,22 @@ public sealed class ProcessNetworkCollector : INetworkCollector, IDisposable
 
     public Task StartAsync(CancellationToken ct)
     {
-        if (!IsAvailable) return Task.CompletedTask;
+        if (!IsAvailable)
+        {
+            Status = CollectorStatus.NotElevated;
+            return Task.CompletedTask;
+        }
 
         _session = new EtwSession(KernelNetworkEvents.ProviderId, OnEvent);
         try
         {
             _session.Start();
+            Status = CollectorStatus.Running;
         }
-        catch
+        catch (Exception ex)
         {
+            Status = CollectorStatus.Failed;
+            StartError = ex.Message;
             _session.Dispose();
             _session = null;
             return Task.CompletedTask;
@@ -40,7 +54,9 @@ public sealed class ProcessNetworkCollector : INetworkCollector, IDisposable
 
     private void OnEvent(ref readonly EVENT_RECORD record)
     {
+        Interlocked.Increment(ref _rawEvents);
         if (!KernelNetworkEvents.TryDecode(in record, out var decoded)) return;
+        Interlocked.Increment(ref _decodedEvents);
 
         lock (_lock)
         {

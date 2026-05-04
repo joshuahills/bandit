@@ -49,7 +49,7 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
             return container;
         }
 
-        _table = new ProcessTable
+        _table = new ProcessTable(collector)
         {
             X = 0, Y = 0,
             Width = Dim.Fill(),
@@ -75,7 +75,13 @@ internal sealed class ProcessTable : View
 
     public ProcessNetworkInfo[] Snapshot { get; set; } = [];
 
-    public ProcessTable() { CanFocus = false; }
+    private readonly ProcessNetworkCollector _collector;
+
+    public ProcessTable(ProcessNetworkCollector collector)
+    {
+        _collector = collector;
+        CanFocus = false;
+    }
 
     protected override bool OnDrawingContent(DrawContext? context)
     {
@@ -89,8 +95,7 @@ internal sealed class ProcessTable : View
 
         if (Snapshot.Length == 0)
         {
-            SetAttribute(Theme.DimAttr);
-            DrawString(2, 2, " Waiting for traffic… ");
+            DrawDiagnostic();
             return true;
         }
 
@@ -103,6 +108,24 @@ internal sealed class ProcessTable : View
             DrawRow(2 + i, rows[i], nameWidth);
 
         return true;
+    }
+
+    private void DrawDiagnostic()
+    {
+        SetAttribute(Theme.DimAttr);
+        DrawString(2, 2, $" ETW session: {_collector.Status} ");
+
+        if (_collector.Status == CollectorStatus.Failed && !string.IsNullOrEmpty(_collector.StartError))
+        {
+            SetAttribute(Theme.WarningAttr);
+            DrawString(2, 3, $" {_collector.StartError} ");
+            return;
+        }
+
+        SetAttribute(Theme.DimAttr);
+        DrawString(2, 3, $" Events received: {_collector.RawEventsSeen} ");
+        DrawString(2, 4, $" Events decoded: {_collector.DecodedEventsSeen} ");
+        DrawString(2, 5, " Waiting for traffic… ");
     }
 
     private void DrawHeader(int nameWidth)
