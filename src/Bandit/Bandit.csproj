@@ -25,8 +25,13 @@
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/joshuahills/bandit</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <Version Condition="'$(Version)' == ''">0.1.0</Version>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Terminal.Gui" Version="2.0.1" />
