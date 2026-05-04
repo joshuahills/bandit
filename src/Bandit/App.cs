@@ -159,6 +159,7 @@ public sealed class App(AppState state) : IDisposable
                 {
                     state.TimescaleIndex = captured;
                     RefreshStatusBar();
+                    _screens[state.ActiveScreenIndex].Refresh();
                     m.Handled = true;
                 }
             };
@@ -263,12 +264,14 @@ public sealed class App(AppState state) : IDisposable
             {
                 state.CycleTimescaleDown();
                 RefreshStatusBar();
+                _screens[state.ActiveScreenIndex].Refresh();
                 key.Handled = true;
             }
             else if (rune == ']')
             {
                 state.CycleTimescaleUp();
                 RefreshStatusBar();
+                _screens[state.ActiveScreenIndex].Refresh();
                 key.Handled = true;
             }
         };

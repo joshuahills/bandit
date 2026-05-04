@@ -62,8 +62,31 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
     public void Refresh()
     {
         if (_table is null) return;
-        _table.Snapshot = collector.Snapshots.Latest() ?? [];
+        _table.Snapshot = AggregateOverWindow(state.TimescaleSeconds);
+        _table.WindowLabel = state.TimescaleLabel;
         _table.SetNeedsDraw();
+    }
+
+    private ProcessNetworkInfo[] AggregateOverWindow(int seconds)
+    {
+        var window = collector.Snapshots.TailN(seconds);
+        if (window.Length == 0) return [];
+
+        var totals = new Dictionary<int, (string Name, long In, long Out)>();
+        foreach (var snapshot in window)
+        {
+            foreach (var p in snapshot)
+            {
+                totals.TryGetValue(p.Pid, out var t);
+                totals[p.Pid] = (p.Name, t.In + p.BytesIn, t.Out + p.BytesOut);
+            }
+        }
+
+        var result = new ProcessNetworkInfo[totals.Count];
+        int i = 0;
+        foreach (var kv in totals)
+            result[i++] = new ProcessNetworkInfo(kv.Key, kv.Value.Name, kv.Value.In, kv.Value.Out);
+        return result;
     }
 }
 
@@ -74,6 +97,7 @@ internal sealed class ProcessTable : View
     private const int NameMin   = 16;
 
     public ProcessNetworkInfo[] Snapshot { get; set; } = [];
+    public string WindowLabel { get; set; } = "";
 
     private readonly ProcessNetworkCollector _collector;
 
@@ -127,7 +151,10 @@ internal sealed class ProcessTable : View
     {
         SetAttribute(Theme.StatusAttr);
         DrawString(1, 0, " PID".PadRight(PidWidth + 1));
-        DrawString(1 + PidWidth + 1, 0, "PROCESS".PadRight(nameWidth));
+        string nameLabel = string.IsNullOrEmpty(WindowLabel)
+            ? "PROCESS"
+            : $"PROCESS — last {WindowLabel}";
+        DrawString(1 + PidWidth + 1, 0, Truncate(nameLabel, nameWidth));
         DrawString(1 + PidWidth + 1 + nameWidth + 1, 0, "↑".PadLeft(RateWidth));
         DrawString(1 + PidWidth + 1 + nameWidth + 1 + RateWidth + 1, 0, "↓".PadLeft(RateWidth));
     }
@@ -136,8 +163,8 @@ internal sealed class ProcessTable : View
     {
         string pid = row.Pid.ToString().PadLeft(PidWidth);
         string name = Truncate(row.Name, nameWidth);
-        string up = $"{BandwidthChart.FormatBytesPerSec(row.BytesOut)}/s".PadLeft(RateWidth);
-        string down = $"{BandwidthChart.FormatBytesPerSec(row.BytesIn)}/s".PadLeft(RateWidth);
+        string up = BandwidthChart.FormatBytesPerSec(row.BytesOut).PadLeft(RateWidth);
+        string down = BandwidthChart.FormatBytesPerSec(row.BytesIn).PadLeft(RateWidth);
 
         SetAttribute(Theme.StatusAttr);
         DrawString(1, y, pid);
