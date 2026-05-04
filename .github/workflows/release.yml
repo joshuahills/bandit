@@ -128,6 +128,8 @@ jobs:
           if (git diff --cached --quiet) {
             Write-Host 'No Scoop manifest changes to commit.'
           } else {
-            git commit -m "scoop: bump bandit to ${{ env.VERSION }}"
+            # [skip ci] suppresses workflow runs on this commit so we don't
+            # trigger another release for the manifest bump itself.
+            git commit -m "scoop: bump bandit to ${{ env.VERSION }} [skip ci]"
             git push
           }
