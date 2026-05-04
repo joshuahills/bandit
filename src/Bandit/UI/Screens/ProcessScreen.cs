@@ -62,12 +62,12 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
     public void Refresh()
     {
         if (_table is null) return;
-        _table.Snapshot = AggregateOverWindow(state.TimescaleSeconds);
+        _table.Rows = BuildRows(state.TimescaleSeconds);
         _table.WindowLabel = state.TimescaleLabel;
         _table.SetNeedsDraw();
     }
 
-    private ProcessNetworkInfo[] AggregateOverWindow(int seconds)
+    private ProcessNetworkRow[] BuildRows(int seconds)
     {
         var window = collector.Snapshots.TailN(seconds);
         if (window.Length == 0) return [];
@@ -82,10 +82,21 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
             }
         }
 
-        var result = new ProcessNetworkInfo[totals.Count];
+        // Newest snapshot in the window is the live (last-second) delta.
+        var live = new Dictionary<int, (long In, long Out)>();
+        foreach (var p in window[^1])
+            live[p.Pid] = (p.BytesIn, p.BytesOut);
+
+        var result = new ProcessNetworkRow[totals.Count];
         int i = 0;
         foreach (var kv in totals)
-            result[i++] = new ProcessNetworkInfo(kv.Key, kv.Value.Name, kv.Value.In, kv.Value.Out);
+        {
+            live.TryGetValue(kv.Key, out var l);
+            result[i++] = new ProcessNetworkRow(
+                kv.Key, kv.Value.Name,
+                l.In, l.Out,
+                kv.Value.In, kv.Value.Out);
+        }
         return result;
     }
 }
@@ -93,10 +104,11 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
 internal sealed class ProcessTable : View
 {
     private const int PidWidth  = 6;
-    private const int RateWidth = 11;
+    private const int LiveWidth = 9;
+    private const int TotalWidth = 9;
     private const int NameMin   = 16;
 
-    public ProcessNetworkInfo[] Snapshot { get; set; } = [];
+    public ProcessNetworkRow[] Rows { get; set; } = [];
     public string WindowLabel { get; set; } = "";
 
     private readonly ProcessNetworkCollector _collector;
@@ -113,23 +125,24 @@ internal sealed class ProcessTable : View
         int height = Viewport.Height;
         if (width <= 0 || height <= 0) return true;
 
-        int nameWidth = Math.Max(NameMin, width - PidWidth - RateWidth - RateWidth - 4);
+        int rateBlock = LiveWidth * 2 + TotalWidth * 2 + 4;
+        int nameWidth = Math.Max(NameMin, width - PidWidth - rateBlock - 2);
 
         DrawHeader(nameWidth);
 
-        if (Snapshot.Length == 0)
+        if (Rows.Length == 0)
         {
             DrawDiagnostic();
             return true;
         }
 
-        var rows = Snapshot
-            .OrderByDescending(p => p.BytesIn + p.BytesOut)
+        var sorted = Rows
+            .OrderByDescending(p => p.TotalBytesIn + p.TotalBytesOut)
             .Take(height - 2)
             .ToArray();
 
-        for (int i = 0; i < rows.Length; i++)
-            DrawRow(2 + i, rows[i], nameWidth);
+        for (int i = 0; i < sorted.Length; i++)
+            DrawRow(2 + i, sorted[i], nameWidth);
 
         return true;
     }
@@ -150,33 +163,59 @@ internal sealed class ProcessTable : View
     private void DrawHeader(int nameWidth)
     {
         SetAttribute(Theme.StatusAttr);
-        DrawString(1, 0, " PID".PadRight(PidWidth + 1));
-        string nameLabel = string.IsNullOrEmpty(WindowLabel)
-            ? "PROCESS"
-            : $"PROCESS — last {WindowLabel}";
-        DrawString(1 + PidWidth + 1, 0, Truncate(nameLabel, nameWidth));
-        DrawString(1 + PidWidth + 1 + nameWidth + 1, 0, "↑".PadLeft(RateWidth));
-        DrawString(1 + PidWidth + 1 + nameWidth + 1 + RateWidth + 1, 0, "↓".PadLeft(RateWidth));
+        int x = 1;
+        DrawString(x, 0, " PID".PadRight(PidWidth + 1));
+        x += PidWidth + 1;
+
+        DrawString(x, 0, "PROCESS".PadRight(nameWidth));
+        x += nameWidth + 1;
+
+        DrawString(x, 0, "↑/s".PadLeft(LiveWidth));
+        x += LiveWidth + 1;
+
+        DrawString(x, 0, "↓/s".PadLeft(LiveWidth));
+        x += LiveWidth + 1;
+
+        string label = string.IsNullOrEmpty(WindowLabel) ? "↑" : $"↑ {WindowLabel}";
+        DrawString(x, 0, label.PadLeft(TotalWidth));
+        x += TotalWidth + 1;
+
+        label = string.IsNullOrEmpty(WindowLabel) ? "↓" : $"↓ {WindowLabel}";
+        DrawString(x, 0, label.PadLeft(TotalWidth));
     }
 
-    private void DrawRow(int y, ProcessNetworkInfo row, int nameWidth)
+    private void DrawRow(int y, ProcessNetworkRow row, int nameWidth)
     {
         string pid = row.Pid.ToString().PadLeft(PidWidth);
         string name = Truncate(row.Name, nameWidth);
-        string up = BandwidthChart.FormatBytesPerSec(row.BytesOut).PadLeft(RateWidth);
-        string down = BandwidthChart.FormatBytesPerSec(row.BytesIn).PadLeft(RateWidth);
+        string liveUp = $"{BandwidthChart.FormatBytesPerSec(row.LiveBytesOut)}/s".PadLeft(LiveWidth);
+        string liveDown = $"{BandwidthChart.FormatBytesPerSec(row.LiveBytesIn)}/s".PadLeft(LiveWidth);
+        string totalUp = BandwidthChart.FormatBytesPerSec(row.TotalBytesOut).PadLeft(TotalWidth);
+        string totalDown = BandwidthChart.FormatBytesPerSec(row.TotalBytesIn).PadLeft(TotalWidth);
 
+        int x = 1;
         SetAttribute(Theme.StatusAttr);
-        DrawString(1, y, pid);
+        DrawString(x, y, pid);
+        x += PidWidth + 1;
 
         SetAttribute(Theme.AccentAttr);
-        DrawString(1 + PidWidth + 1, y, name);
+        DrawString(x, y, name);
+        x += nameWidth + 1;
 
         SetAttribute(Theme.UploadAttr);
-        DrawString(1 + PidWidth + 1 + nameWidth + 1, y, up);
+        DrawString(x, y, liveUp);
+        x += LiveWidth + 1;
 
         SetAttribute(Theme.DownloadAttr);
-        DrawString(1 + PidWidth + 1 + nameWidth + 1 + RateWidth + 1, y, down);
+        DrawString(x, y, liveDown);
+        x += LiveWidth + 1;
+
+        SetAttribute(Theme.UploadAttr);
+        DrawString(x, y, totalUp);
+        x += TotalWidth + 1;
+
+        SetAttribute(Theme.DownloadAttr);
+        DrawString(x, y, totalDown);
     }
 
     private static string Truncate(string value, int width)
