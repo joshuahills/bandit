@@ -17,4 +17,13 @@
     <PackageReference Include="Terminal.Gui" Version="2.0.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Terminal.Gui's ConfigurationManager runs in a module initializer and
+         uses reflection-based deep cloning on Scheme/Theme types. Trimming
+         strips their constructors and the app crashes before Main runs.
+         Keeping the assembly intact is the supported fix per TG v2's
+         IL2026/IL2090 warnings during AOT publish. -->
+    <TrimmerRootAssembly Include="Terminal.Gui" />
+  </ItemGroup>
+
 </Project>
