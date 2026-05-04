@@ -125,7 +125,23 @@ internal sealed class ProcessTable : View
         SetAttribute(Theme.DimAttr);
         DrawString(2, 3, $" Events received: {_collector.RawEventsSeen} ");
         DrawString(2, 4, $" Events decoded: {_collector.DecodedEventsSeen} ");
-        DrawString(2, 5, " Waiting for traffic… ");
+
+        SetAttribute(Theme.AccentAttr);
+        DrawString(2, 6, " Top event shapes (Id / Task / Opcode → count):");
+        SetAttribute(Theme.DimAttr);
+
+        var top = _collector.EventShapeHistogram
+            .OrderByDescending(kv => kv.Value)
+            .Take(10)
+            .ToArray();
+        for (int i = 0; i < top.Length; i++)
+        {
+            long shape = top[i].Key;
+            int id = (int)((shape >> 24) & 0xFFFF);
+            int task = (int)((shape >> 8) & 0xFFFF);
+            int opcode = (int)(shape & 0xFF);
+            DrawString(2, 7 + i, $"   id={id,-5} task={task,-3} opcode={opcode,-3} → {top[i].Value}");
+        }
     }
 
     private void DrawHeader(int nameWidth)
