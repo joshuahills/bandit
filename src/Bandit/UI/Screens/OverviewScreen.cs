@@ -28,6 +28,7 @@ public sealed class OverviewScreen(AppState state, SystemNetworkCollector collec
     {
         if (_chart is null) return;
         _chart.Samples = collector.Samples.TailN(state.TimescaleSeconds);
+        _chart.TimescaleSeconds = state.TimescaleSeconds;
         _chart.SetNeedsDraw();
     }
 }

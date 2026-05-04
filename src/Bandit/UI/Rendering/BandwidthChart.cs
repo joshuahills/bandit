@@ -10,8 +10,11 @@ public sealed class BandwidthChart : View
 {
     private const int AxisWidth = 8;
     private const int GridRows = 4;
+    private const int XAxisRows = 1;
+    private const int XAxisLabelCount = 5;
 
     public NetworkSample[] Samples { get; set; } = [];
+    public int TimescaleSeconds { get; set; } = 60;
 
     public BandwidthChart()
     {
@@ -25,12 +28,13 @@ public sealed class BandwidthChart : View
         if (width <= 0 || height <= 0) return true;
 
         int chartWidth = Math.Max(1, width - AxisWidth);
+        int plotHeight = Math.Max(1, height - XAxisRows);
 
         if (Samples.Length == 0)
         {
             SetAttribute(Theme.DimAttr);
             string msg = " Waiting for data… ";
-            DrawString(AxisWidth, height / 2, msg);
+            DrawString(AxisWidth, plotHeight / 2, msg);
             return true;
         }
 
@@ -42,10 +46,11 @@ public sealed class BandwidthChart : View
         }
         maxValue *= 1.15;
 
-        DrawGrid(chartWidth, height);
-        DrawYAxis(height, maxValue);
-        DrawLineChart(chartWidth, height, maxValue, s => s.BytesIn,  Theme.DownloadAttr);
-        DrawLineChart(chartWidth, height, maxValue, s => s.BytesOut, Theme.UploadAttr);
+        DrawGrid(chartWidth, plotHeight);
+        DrawYAxis(plotHeight, maxValue);
+        DrawLineChart(chartWidth, plotHeight, maxValue, s => s.BytesIn,  Theme.DownloadAttr);
+        DrawLineChart(chartWidth, plotHeight, maxValue, s => s.BytesOut, Theme.UploadAttr);
+        DrawXAxis(chartWidth, height);
         return true;
     }
 
@@ -131,6 +136,30 @@ public sealed class BandwidthChart : View
         }
     }
 
+    private void DrawXAxis(int chartWidth, int totalHeight)
+    {
+        if (TimescaleSeconds <= 0) return;
+        SetAttribute(Theme.AxisAttr);
+        int y = totalHeight - 1;
+
+        for (int i = 0; i < XAxisLabelCount; i++)
+        {
+            int secondsAgo = (XAxisLabelCount - 1 - i) * TimescaleSeconds / (XAxisLabelCount - 1);
+            string label = secondsAgo == 0 ? "now" : "-" + FormatDuration(secondsAgo);
+
+            int tickX = i * (chartWidth - 1) / (XAxisLabelCount - 1);
+            int x = i == 0
+                ? AxisWidth + tickX
+                : i == XAxisLabelCount - 1
+                    ? AxisWidth + tickX - label.Length + 1
+                    : AxisWidth + tickX - label.Length / 2;
+            if (x < AxisWidth) x = AxisWidth;
+            if (x + label.Length > AxisWidth + chartWidth) x = AxisWidth + chartWidth - label.Length;
+
+            DrawString(x, y, label);
+        }
+    }
+
     private void DrawString(int x, int y, string text)
     {
         Move(x, y);
@@ -144,5 +173,25 @@ public sealed class BandwidthChart : View
         if (bytes >= 1_000_000)     return $"{bytes / 1_000_000:F1}M";
         if (bytes >= 1_000)         return $"{bytes / 1_000:F1}K";
         return $"{bytes:F0}B";
+    }
+
+    private static string FormatDuration(int seconds)
+    {
+        if (seconds < 60) return $"{seconds}s";
+        if (seconds < 3600)
+        {
+            int m = seconds / 60;
+            int s = seconds % 60;
+            return s == 0 ? $"{m}m" : $"{m}m{s}s";
+        }
+        if (seconds < 86400)
+        {
+            int h = seconds / 3600;
+            int m = (seconds % 3600) / 60;
+            return m == 0 ? $"{h}h" : $"{h}h{m}m";
+        }
+        int d = seconds / 86400;
+        int hh = (seconds % 86400) / 3600;
+        return hh == 0 ? $"{d}d" : $"{d}d{hh}h";
     }
 }
