@@ -3,6 +3,7 @@ using Bandit.Data.Collectors;
 using Bandit.Data.Models;
 using Bandit.UI.Rendering;
 using Terminal.Gui.Drawing;
+using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Attribute = Terminal.Gui.Drawing.Attribute;
 
@@ -104,19 +105,24 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
 internal sealed class ProcessTable : View
 {
     private const int PidWidth  = 6;
-    private const int LiveWidth = 9;
-    private const int TotalWidth = 9;
+    private const int LiveWidth = 10;
+    private const int TotalWidth = 10;
     private const int NameMin   = 16;
+
+    public enum SortKey { TotalCombined, Pid, Name, LiveUp, LiveDown, TotalUp, TotalDown }
 
     public ProcessNetworkRow[] Rows { get; set; } = [];
     public string WindowLabel { get; set; } = "";
 
     private readonly ProcessNetworkCollector _collector;
+    private SortKey _sortKey = SortKey.TotalCombined;
+    private bool _sortDesc = true;
 
     public ProcessTable(ProcessNetworkCollector collector)
     {
         _collector = collector;
         CanFocus = false;
+        MouseEvent += OnTableMouse;
     }
 
     protected override bool OnDrawingContent(DrawContext? context)
@@ -136,8 +142,7 @@ internal sealed class ProcessTable : View
             return true;
         }
 
-        var sorted = Rows
-            .OrderByDescending(p => p.TotalBytesIn + p.TotalBytesOut)
+        var sorted = ApplySort(Rows)
             .Take(height - 2)
             .ToArray();
 
@@ -145,6 +150,61 @@ internal sealed class ProcessTable : View
             DrawRow(2 + i, sorted[i], nameWidth);
 
         return true;
+    }
+
+    private IEnumerable<ProcessNetworkRow> ApplySort(IEnumerable<ProcessNetworkRow> rows) =>
+        _sortKey switch
+        {
+            SortKey.Pid       => _sortDesc ? rows.OrderByDescending(r => r.Pid)             : rows.OrderBy(r => r.Pid),
+            SortKey.Name      => _sortDesc ? rows.OrderByDescending(r => r.Name)            : rows.OrderBy(r => r.Name),
+            SortKey.LiveUp    => _sortDesc ? rows.OrderByDescending(r => r.LiveBytesOut)    : rows.OrderBy(r => r.LiveBytesOut),
+            SortKey.LiveDown  => _sortDesc ? rows.OrderByDescending(r => r.LiveBytesIn)     : rows.OrderBy(r => r.LiveBytesIn),
+            SortKey.TotalUp   => _sortDesc ? rows.OrderByDescending(r => r.TotalBytesOut)   : rows.OrderBy(r => r.TotalBytesOut),
+            SortKey.TotalDown => _sortDesc ? rows.OrderByDescending(r => r.TotalBytesIn)    : rows.OrderBy(r => r.TotalBytesIn),
+            _                 => _sortDesc ? rows.OrderByDescending(r => r.TotalBytesIn + r.TotalBytesOut)
+                                           : rows.OrderBy(r => r.TotalBytesIn + r.TotalBytesOut),
+        };
+
+    private void OnTableMouse(object? sender, Mouse e)
+    {
+        if (!e.IsSingleClicked || e.Position is not { } pos || pos.Y != 0) return;
+        var clicked = ColumnAt(pos.X);
+        if (clicked is null) return;
+
+        if (_sortKey == clicked.Value)
+        {
+            _sortDesc = !_sortDesc;
+        }
+        else
+        {
+            _sortKey = clicked.Value;
+            // Numeric columns default to descending (biggest first); text/id
+            // columns default to ascending.
+            _sortDesc = clicked.Value is not (SortKey.Pid or SortKey.Name);
+        }
+        SetNeedsDraw();
+        e.Handled = true;
+    }
+
+    private SortKey? ColumnAt(int x)
+    {
+        int width = Viewport.Width;
+        int rateBlock = LiveWidth * 2 + TotalWidth * 2 + 4;
+        int nameWidth = Math.Max(NameMin, width - PidWidth - rateBlock - 2);
+
+        int start = 1;
+        if (x >= start && x < start + PidWidth + 1) return SortKey.Pid;
+        start += PidWidth + 1;
+        if (x >= start && x < start + nameWidth) return SortKey.Name;
+        start += nameWidth + 1;
+        if (x >= start && x < start + LiveWidth) return SortKey.LiveUp;
+        start += LiveWidth + 1;
+        if (x >= start && x < start + LiveWidth) return SortKey.LiveDown;
+        start += LiveWidth + 1;
+        if (x >= start && x < start + TotalWidth) return SortKey.TotalUp;
+        start += TotalWidth + 1;
+        if (x >= start && x < start + TotalWidth) return SortKey.TotalDown;
+        return null;
     }
 
     private void DrawDiagnostic()
@@ -162,26 +222,38 @@ internal sealed class ProcessTable : View
 
     private void DrawHeader(int nameWidth)
     {
-        SetAttribute(Theme.StatusAttr);
         int x = 1;
-        DrawString(x, 0, " PID".PadRight(PidWidth + 1));
+        DrawHeaderCell(x, " PID", PidWidth + 1, leftAlign: true,  SortKey.Pid);
         x += PidWidth + 1;
 
-        DrawString(x, 0, "PROCESS".PadRight(nameWidth));
+        DrawHeaderCell(x, "PROCESS", nameWidth, leftAlign: true, SortKey.Name);
         x += nameWidth + 1;
 
-        DrawString(x, 0, "↑/s".PadLeft(LiveWidth));
+        DrawHeaderCell(x, "↑/s", LiveWidth, leftAlign: false, SortKey.LiveUp);
         x += LiveWidth + 1;
 
-        DrawString(x, 0, "↓/s".PadLeft(LiveWidth));
+        DrawHeaderCell(x, "↓/s", LiveWidth, leftAlign: false, SortKey.LiveDown);
         x += LiveWidth + 1;
 
-        string label = string.IsNullOrEmpty(WindowLabel) ? "↑" : $"↑ {WindowLabel}";
-        DrawString(x, 0, label.PadLeft(TotalWidth));
+        string upLabel = string.IsNullOrEmpty(WindowLabel) ? "↑" : $"↑ {WindowLabel}";
+        DrawHeaderCell(x, upLabel, TotalWidth, leftAlign: false, SortKey.TotalUp);
         x += TotalWidth + 1;
 
-        label = string.IsNullOrEmpty(WindowLabel) ? "↓" : $"↓ {WindowLabel}";
-        DrawString(x, 0, label.PadLeft(TotalWidth));
+        string downLabel = string.IsNullOrEmpty(WindowLabel) ? "↓" : $"↓ {WindowLabel}";
+        DrawHeaderCell(x, downLabel, TotalWidth, leftAlign: false, SortKey.TotalDown);
+    }
+
+    private void DrawHeaderCell(int x, string label, int width, bool leftAlign, SortKey key)
+    {
+        bool active = _sortKey == key;
+        string content = active
+            ? (leftAlign ? $"{label} {(_sortDesc ? '▾' : '▴')}" : $"{(_sortDesc ? '▾' : '▴')} {label}")
+            : label;
+        string padded = leftAlign ? content.PadRight(width) : content.PadLeft(width);
+        if (padded.Length > width) padded = padded[..width];
+
+        SetAttribute(active ? Theme.ActiveTabAttr : Theme.StatusAttr);
+        DrawString(x, 0, padded);
     }
 
     private void DrawRow(int y, ProcessNetworkRow row, int nameWidth)
