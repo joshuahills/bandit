@@ -68,8 +68,18 @@ jobs:
           echo "VERSION=$version" >> $env:GITHUB_ENV
           Write-Host "Version: $version"
 
-      - name: Publish AOT exe
-        run: dotnet publish src/Bandit/Bandit.csproj -c Release -r win-x64 /p:Version=${{ env.VERSION }} -o publish/exe
+      - name: Publish AOT exe (x64)
+        run: dotnet publish src/Bandit/Bandit.csproj -c Release -r win-x64 /p:Version=${{ env.VERSION }} -o publish/exe-x64
+
+      - name: Publish AOT exe (arm64)
+        run: dotnet publish src/Bandit/Bandit.csproj -c Release -r win-arm64 /p:Version=${{ env.VERSION }} -o publish/exe-arm64
+
+      - name: Stage artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path publish/staged | Out-Null
+          Copy-Item publish/exe-x64/Bandit.exe   publish/staged/Bandit-x64.exe
+          Copy-Item publish/exe-arm64/Bandit.exe publish/staged/Bandit-arm64.exe
 
       - name: Pack .NET tool
         run: dotnet pack src/Bandit/Bandit.csproj -c Release /p:PackAsTool=true /p:Version=${{ env.VERSION }} -o publish/tool
@@ -79,7 +89,8 @@ jobs:
         with:
           name: bandit-${{ env.VERSION }}
           path: |
-            publish/exe/Bandit.exe
+            publish/staged/Bandit-x64.exe
+            publish/staged/Bandit-arm64.exe
             publish/tool/*.nupkg
 
       - name: Comment on PR
@@ -89,7 +100,7 @@ jobs:
             const version = process.env.VERSION;
             const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const body = [
-              `📦 Pre-release build \`${version}\` ready.`,
+              `📦 Pre-release build \`${version}\` ready (x64 + arm64).`,
               ``,
               `**Download:** [workflow artifacts](${runUrl}#artifacts)`,
               ``,
