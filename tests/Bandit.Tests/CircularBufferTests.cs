@@ -122,15 +122,26 @@ public class CircularBufferTests
         }, testCt);
 
         // Wait until the writer has filled the buffer (deterministic), or bail
-        // out after a generous overall timeout if something is wrong.
-        while (buf.Count < capacity && !hardTimeout.IsCancellationRequested)
-            await Task.Delay(10, hardTimeout.Token);
+        // out after a generous overall timeout if something is wrong. The
+        // try/finally guarantees stop.Cancel() runs even if Task.Delay throws,
+        // so the worker tasks always wind down. The catch swallows our local
+        // 5s timeout so the assertion below produces a clearer
+        // 'expected N, got M' diagnostic — but propagates xUnit's own
+        // cancellation as a normal cancel.
+        try
+        {
+            while (buf.Count < capacity)
+                await Task.Delay(10, hardTimeout.Token);
+        }
+        catch (OperationCanceledException) when (hardTimeout.IsCancellationRequested && !testCt.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            stop.Cancel();
+        }
 
-        stop.Cancel();
         await Task.WhenAll(writer, reader).WaitAsync(testCt);
-
-        // No exceptions = primary success criterion. The buffer should also be
-        // at capacity once the writer has been running long enough to fill it.
         Assert.Equal(capacity, buf.Count);
     }
 }
