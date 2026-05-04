@@ -1,21 +1,21 @@
 {
-    "version": "0.0.0",
-    "description": "btop-style network monitor TUI for Windows.",
-    "homepage": "https://github.com/joshuahills/bandit",
-    "license": "MIT",
-    "architecture": {
-        "64bit": {
-            "url": "https://github.com/joshuahills/bandit/releases/download/v0.0.0/Bandit.exe",
-            "hash": "0000000000000000000000000000000000000000000000000000000000000000"
-        }
-    },
-    "bin": "Bandit.exe",
-    "checkver": "github",
-    "autoupdate": {
-        "architecture": {
-            "64bit": {
-                "url": "https://github.com/joshuahills/bandit/releases/download/v$version/Bandit.exe"
-            }
-        }
+  "version": "0.1.1",
+  "description": "btop-style network monitor TUI for Windows.",
+  "homepage": "https://github.com/joshuahills/bandit",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/joshuahills/bandit/releases/download/v0.1.1/Bandit.exe",
+      "hash": "a40cc8d731a542df0eb979227244ff550f5dfffbc999264ffc6e092e0e71e789"
     }
+  },
+  "bin": "Bandit.exe",
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/joshuahills/bandit/releases/download/v$version/Bandit.exe"
+      }
+    }
+  }
 }
