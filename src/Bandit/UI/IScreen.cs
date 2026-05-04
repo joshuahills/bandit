@@ -1,6 +1,6 @@
-using Terminal.Gui.ViewBase;
-
 namespace Bandit.UI;
+
+using Terminal.Gui.ViewBase;
 
 public interface IScreen
 {
