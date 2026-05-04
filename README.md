@@ -1,5 +1,13 @@
 # Bandit
 
+[![CI](https://github.com/joshuahills/bandit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/joshuahills/bandit/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/joshuahills/bandit?label=release&color=blue)](https://github.com/joshuahills/bandit/releases/latest)
+[![NuGet](https://img.shields.io/nuget/v/Bandit.Cli?label=nuget&color=004880)](https://www.nuget.org/packages/Bandit.Cli)
+[![NuGet downloads](https://img.shields.io/nuget/dt/Bandit.Cli?color=004880)](https://www.nuget.org/packages/Bandit.Cli)
+[![License: MIT](https://img.shields.io/github/license/joshuahills/bandit)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-windows-0078d6)
+![.NET](https://img.shields.io/badge/.NET-10-512bd4)
+
 btop-style network monitor TUI for Windows.
 
 ## Install
