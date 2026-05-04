@@ -33,18 +33,12 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          # Read the latest v0.1.* tag and increment the patch by one. This
-          # decouples version from github.run_number so PR builds (which also
-          # ran the workflow) don't burn through the master sequence.
-          $latestTag = git tag --list 'v0.1.*' --sort=-v:refname | Select-Object -First 1
-          $nextPatch = if ($latestTag) { [int]($latestTag -replace '^v0\.1\.', '') + 1 } else { 0 }
-          $version = "0.1.$nextPatch"
+          $version = "0.1.${{ github.run_number }}"
           $tag = "v$version"
           echo "VERSION=$version" >> $env:GITHUB_ENV
           echo "TAG=$tag" >> $env:GITHUB_ENV
           echo "version=$version" >> $env:GITHUB_OUTPUT
           echo "tag=$tag" >> $env:GITHUB_OUTPUT
-          Write-Host "Version: $version (previous tag: $latestTag)"
 
       - name: Restore
         run: dotnet restore src/Bandit/Bandit.csproj
