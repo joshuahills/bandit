@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      sha256: ${{ steps.hash.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: preview
+
+      - name: Compute version
+        id: version
+        shell: pwsh
+        run: |
+          $version = "0.1.${{ github.run_number }}"
+          $tag = "v$version"
+          echo "VERSION=$version" >> $env:GITHUB_ENV
+          echo "TAG=$tag" >> $env:GITHUB_ENV
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Restore
+        run: dotnet restore src/Bandit/Bandit.csproj
+
+      - name: Build
+        run: dotnet build src/Bandit/Bandit.csproj -c Release --no-restore /p:Version=${{ env.VERSION }}
+
+      - name: Test
+        shell: pwsh
+        run: |
+          $testProjects = Get-ChildItem -Path . -Filter '*.Tests.csproj' -Recurse
+          if ($testProjects) {
+            foreach ($p in $testProjects) {
+              dotnet test $p.FullName -c Release
+            }
+          } else {
+            Write-Host 'No test projects found, skipping tests.'
+          }
+
+      - name: Publish AOT exe
+        run: dotnet publish src/Bandit/Bandit.csproj -c Release -r win-x64 /p:Version=${{ env.VERSION }} -o publish/exe
+
+      - name: Pack .NET tool
+        run: dotnet pack src/Bandit/Bandit.csproj -c Release /p:PackAsTool=true /p:Version=${{ env.VERSION }} -o publish/tool
+
+      - name: Compute SHA256 of exe
+        id: hash
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash publish/exe/Bandit.exe -Algorithm SHA256).Hash.ToLower()
+          echo "sha256=$hash" >> $env:GITHUB_OUTPUT
+          echo "SHA256=$hash" >> $env:GITHUB_ENV
+
+      - name: Tag release
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag ${{ env.TAG }}
+          git push origin ${{ env.TAG }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.TAG }}
+          generate_release_notes: true
+          files: |
+            publish/exe/Bandit.exe
+            publish/tool/*.nupkg
+
+      - name: Push to NuGet.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        if: env.NUGET_API_KEY != ''
+        shell: pwsh
+        run: |
+          Get-ChildItem publish/tool/*.nupkg | ForEach-Object {
+            dotnet nuget push $_.FullName -k $env:NUGET_API_KEY -s https://api.nuget.org/v3/index.json --skip-duplicate
+          }
+
+      - name: Update Scoop manifest
+        shell: pwsh
+        run: |
+          $manifestPath = 'bucket/bandit.json'
+          $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          $manifest.version = '${{ env.VERSION }}'
+          $manifest.architecture.'64bit'.url = "https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/Bandit.exe"
+          $manifest.architecture.'64bit'.hash = '${{ env.SHA256 }}'
+          $json = $manifest | ConvertTo-Json -Depth 10
+          Set-Content -Path $manifestPath -Value $json -NoNewline
+
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add $manifestPath
+          if (git diff --cached --quiet) {
+            Write-Host 'No Scoop manifest changes to commit.'
+          } else {
+            git commit -m "scoop: bump bandit to ${{ env.VERSION }}"
+            git push
+          }

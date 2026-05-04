@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: preview
+
+      - name: Restore
+        run: dotnet restore src/Bandit/Bandit.csproj
+
+      - name: Build
+        run: dotnet build src/Bandit/Bandit.csproj -c Release --no-restore
+
+      - name: Test
+        shell: pwsh
+        run: |
+          $testProjects = Get-ChildItem -Path . -Filter '*.Tests.csproj' -Recurse
+          if ($testProjects) {
+            foreach ($p in $testProjects) {
+              dotnet test $p.FullName -c Release
+            }
+          } else {
+            Write-Host 'No test projects found, skipping tests.'
+          }
+
+  publish-pr:
+    needs: build
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: preview
+
+      - name: Compute version
+        shell: pwsh
+        run: |
+          $version = "0.1.${{ github.run_number }}-pr.${{ github.event.pull_request.number }}"
+          echo "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Publish AOT exe
+        run: dotnet publish src/Bandit/Bandit.csproj -c Release -r win-x64 /p:Version=${{ env.VERSION }} -o publish/exe
+
+      - name: Pack .NET tool
+        run: dotnet pack src/Bandit/Bandit.csproj -c Release /p:PackAsTool=true /p:Version=${{ env.VERSION }} -o publish/tool
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-${{ env.VERSION }}
+          path: |
+            publish/exe/Bandit.exe
+            publish/tool/*.nupkg
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = process.env.VERSION;
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `📦 Pre-release build \`${version}\` ready.`,
+              ``,
+              `**Download:** [workflow artifacts](${runUrl}#artifacts)`,
+              ``,
+              `**Install the .NET tool locally** (after downloading and unzipping the artifact):`,
+              '```',
+              `dotnet tool install -g --add-source ./bandit-${version} Bandit --version ${version}`,
+              '```',
+            ].join('\n');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+        env:
+          VERSION: ${{ env.VERSION }}

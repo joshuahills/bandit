@@ -1,0 +1,33 @@
+name: Winget submission
+
+on:
+  release:
+    types: [released]
+
+jobs:
+  winget:
+    runs-on: windows-latest
+    if: ${{ !github.event.release.prerelease }}
+    steps:
+      - name: Submit to winget-pkgs
+        shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if (-not $env:WINGET_TOKEN) {
+            Write-Host '::warning::WINGET_TOKEN secret not set; skipping winget submission. Add a PAT with repo + workflow scope on a fork of microsoft/winget-pkgs to enable.'
+            exit 0
+          }
+
+          $version = '${{ github.event.release.tag_name }}'.TrimStart('v')
+          $url = '${{ github.event.release.html_url }}'.Replace('/tag/', '/download/') + '/Bandit.exe'
+
+          # Install wingetcreate
+          Invoke-WebRequest 'https://aka.ms/wingetcreate/latest' -OutFile wingetcreate.exe
+
+          # Submit (creates a PR to microsoft/winget-pkgs; needs MS maintainer approval)
+          ./wingetcreate.exe update joshuahills.bandit `
+            --version $version `
+            --urls $url `
+            --submit `
+            --token $env:WINGET_TOKEN
