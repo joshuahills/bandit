@@ -1,4 +1,5 @@
 using System.Text;
+using Bandit.Data;
 using Bandit.Data.Collectors;
 using Bandit.Data.Models;
 using Bandit.UI.Rendering;
@@ -58,20 +59,8 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
     }
 
     /// <summary>Resolve a process name fragment to a PID via the snapshot history.</summary>
-    public int? FindPidByName(string fragment)
-    {
-        if (string.IsNullOrWhiteSpace(fragment)) return null;
-        var window = collector.Snapshots.TailN(state.TimescaleSeconds);
-        foreach (var snap in window)
-        {
-            foreach (var p in snap)
-            {
-                if (p.Name.Contains(fragment, StringComparison.OrdinalIgnoreCase))
-                    return p.Pid;
-            }
-        }
-        return null;
-    }
+    public int? FindPidByName(string fragment) =>
+        ProcessAggregator.FindPidByName(collector.Snapshots.TailN(state.TimescaleSeconds), fragment);
 
     private void BuildElevationBanner()
     {
@@ -192,38 +181,8 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
         _detail.UpdateData(name ?? $"pid:{pid}", liveIn, liveOut, totalIn, totalOut, history, state.TimescaleSeconds, state.TimescaleLabel);
     }
 
-    private ProcessNetworkRow[] BuildRows(int seconds)
-    {
-        var window = collector.Snapshots.TailN(seconds);
-        if (window.Length == 0) return [];
-
-        var totals = new Dictionary<int, (string Name, long In, long Out)>();
-        foreach (var snapshot in window)
-        {
-            foreach (var p in snapshot)
-            {
-                totals.TryGetValue(p.Pid, out var t);
-                totals[p.Pid] = (p.Name, t.In + p.BytesIn, t.Out + p.BytesOut);
-            }
-        }
-
-        // Newest snapshot in the window is the live (last-second) delta.
-        var live = new Dictionary<int, (long In, long Out)>();
-        foreach (var p in window[^1])
-            live[p.Pid] = (p.BytesIn, p.BytesOut);
-
-        var result = new ProcessNetworkRow[totals.Count];
-        int i = 0;
-        foreach (var kv in totals)
-        {
-            live.TryGetValue(kv.Key, out var l);
-            result[i++] = new ProcessNetworkRow(
-                kv.Key, kv.Value.Name,
-                l.In, l.Out,
-                kv.Value.In, kv.Value.Out);
-        }
-        return result;
-    }
+    private ProcessNetworkRow[] BuildRows(int seconds) =>
+        ProcessAggregator.Aggregate(collector.Snapshots.TailN(seconds));
 }
 
 internal sealed class ProcessTable : View
@@ -233,8 +192,6 @@ internal sealed class ProcessTable : View
     private const int TotalWidth = 10;
     private const int NameMin   = 16;
 
-    public enum SortKey { TotalCombined, Pid, Name, LiveUp, LiveDown, TotalUp, TotalDown }
-
     public ProcessNetworkRow[] Rows { get; set; } = [];
     public string WindowLabel { get; set; } = "";
     public int? SelectedPid { get; set; }
@@ -242,7 +199,7 @@ internal sealed class ProcessTable : View
     public event EventHandler<int>? Activated;
 
     private readonly ProcessNetworkCollector _collector;
-    private SortKey _sortKey = SortKey.TotalCombined;
+    private ProcessSortKey _sortKey = ProcessSortKey.TotalCombined;
     private bool _sortDesc = true;
 
     public ProcessTable(ProcessNetworkCollector collector)
@@ -270,7 +227,7 @@ internal sealed class ProcessTable : View
             return true;
         }
 
-        var sorted = ApplySort(Rows)
+        var sorted = ProcessSorter.Sort(Rows, _sortKey, _sortDesc)
             .Take(height - 2)
             .ToArray();
 
@@ -285,23 +242,10 @@ internal sealed class ProcessTable : View
         return true;
     }
 
-    private IEnumerable<ProcessNetworkRow> ApplySort(IEnumerable<ProcessNetworkRow> rows) =>
-        _sortKey switch
-        {
-            SortKey.Pid       => _sortDesc ? rows.OrderByDescending(r => r.Pid)             : rows.OrderBy(r => r.Pid),
-            SortKey.Name      => _sortDesc ? rows.OrderByDescending(r => r.Name)            : rows.OrderBy(r => r.Name),
-            SortKey.LiveUp    => _sortDesc ? rows.OrderByDescending(r => r.LiveBytesOut)    : rows.OrderBy(r => r.LiveBytesOut),
-            SortKey.LiveDown  => _sortDesc ? rows.OrderByDescending(r => r.LiveBytesIn)     : rows.OrderBy(r => r.LiveBytesIn),
-            SortKey.TotalUp   => _sortDesc ? rows.OrderByDescending(r => r.TotalBytesOut)   : rows.OrderBy(r => r.TotalBytesOut),
-            SortKey.TotalDown => _sortDesc ? rows.OrderByDescending(r => r.TotalBytesIn)    : rows.OrderBy(r => r.TotalBytesIn),
-            _                 => _sortDesc ? rows.OrderByDescending(r => r.TotalBytesIn + r.TotalBytesOut)
-                                           : rows.OrderBy(r => r.TotalBytesIn + r.TotalBytesOut),
-        };
-
     private void OnTableKey(object? sender, Key key)
     {
         if (Rows.Length == 0) return;
-        var sorted = ApplySort(Rows).ToArray();
+        var sorted = ProcessSorter.Sort(Rows, _sortKey, _sortDesc).ToArray();
         if (sorted.Length == 0) return;
 
         int idx = SelectedPid is { } pid
@@ -345,7 +289,7 @@ internal sealed class ProcessTable : View
             if (clicked is null) return;
 
             if (_sortKey == clicked.Value) _sortDesc = !_sortDesc;
-            else { _sortKey = clicked.Value; _sortDesc = clicked.Value is not (SortKey.Pid or SortKey.Name); }
+            else { _sortKey = clicked.Value; _sortDesc = clicked.Value is not (ProcessSortKey.Pid or ProcessSortKey.Name); }
             SetNeedsDraw();
             e.Handled = true;
             return;
@@ -354,7 +298,7 @@ internal sealed class ProcessTable : View
         // Row click → select; double-click → activate.
         if (pos.Y < 2) return;
         int rowIdx = pos.Y - 2;
-        var sorted = ApplySort(Rows).Take(Viewport.Height - 2).ToArray();
+        var sorted = ProcessSorter.Sort(Rows, _sortKey, _sortDesc).Take(Viewport.Height - 2).ToArray();
         if (rowIdx >= sorted.Length) return;
 
         SelectedPid = sorted[rowIdx].Pid;
@@ -365,24 +309,24 @@ internal sealed class ProcessTable : View
             Activated?.Invoke(this, sorted[rowIdx].Pid);
     }
 
-    private SortKey? ColumnAt(int x)
+    private ProcessSortKey? ColumnAt(int x)
     {
         int width = Viewport.Width;
         int rateBlock = LiveWidth * 2 + TotalWidth * 2 + 4;
         int nameWidth = Math.Max(NameMin, width - PidWidth - rateBlock - 2);
 
         int start = 1;
-        if (x >= start && x < start + PidWidth + 1) return SortKey.Pid;
+        if (x >= start && x < start + PidWidth + 1) return ProcessSortKey.Pid;
         start += PidWidth + 1;
-        if (x >= start && x < start + nameWidth) return SortKey.Name;
+        if (x >= start && x < start + nameWidth) return ProcessSortKey.Name;
         start += nameWidth + 1;
-        if (x >= start && x < start + LiveWidth) return SortKey.LiveUp;
+        if (x >= start && x < start + LiveWidth) return ProcessSortKey.LiveUp;
         start += LiveWidth + 1;
-        if (x >= start && x < start + LiveWidth) return SortKey.LiveDown;
+        if (x >= start && x < start + LiveWidth) return ProcessSortKey.LiveDown;
         start += LiveWidth + 1;
-        if (x >= start && x < start + TotalWidth) return SortKey.TotalUp;
+        if (x >= start && x < start + TotalWidth) return ProcessSortKey.TotalUp;
         start += TotalWidth + 1;
-        if (x >= start && x < start + TotalWidth) return SortKey.TotalDown;
+        if (x >= start && x < start + TotalWidth) return ProcessSortKey.TotalDown;
         return null;
     }
 
@@ -402,27 +346,27 @@ internal sealed class ProcessTable : View
     private void DrawHeader(int nameWidth)
     {
         int x = 1;
-        DrawHeaderCell(x, " PID", PidWidth + 1, leftAlign: true,  SortKey.Pid);
+        DrawHeaderCell(x, " PID", PidWidth + 1, leftAlign: true,  ProcessSortKey.Pid);
         x += PidWidth + 1;
 
-        DrawHeaderCell(x, "PROCESS", nameWidth, leftAlign: true, SortKey.Name);
+        DrawHeaderCell(x, "PROCESS", nameWidth, leftAlign: true, ProcessSortKey.Name);
         x += nameWidth + 1;
 
-        DrawHeaderCell(x, "↑/s", LiveWidth, leftAlign: false, SortKey.LiveUp);
+        DrawHeaderCell(x, "↑/s", LiveWidth, leftAlign: false, ProcessSortKey.LiveUp);
         x += LiveWidth + 1;
 
-        DrawHeaderCell(x, "↓/s", LiveWidth, leftAlign: false, SortKey.LiveDown);
+        DrawHeaderCell(x, "↓/s", LiveWidth, leftAlign: false, ProcessSortKey.LiveDown);
         x += LiveWidth + 1;
 
         string upLabel = string.IsNullOrEmpty(WindowLabel) ? "↑" : $"↑ {WindowLabel}";
-        DrawHeaderCell(x, upLabel, TotalWidth, leftAlign: false, SortKey.TotalUp);
+        DrawHeaderCell(x, upLabel, TotalWidth, leftAlign: false, ProcessSortKey.TotalUp);
         x += TotalWidth + 1;
 
         string downLabel = string.IsNullOrEmpty(WindowLabel) ? "↓" : $"↓ {WindowLabel}";
-        DrawHeaderCell(x, downLabel, TotalWidth, leftAlign: false, SortKey.TotalDown);
+        DrawHeaderCell(x, downLabel, TotalWidth, leftAlign: false, ProcessSortKey.TotalDown);
     }
 
-    private void DrawHeaderCell(int x, string label, int width, bool leftAlign, SortKey key)
+    private void DrawHeaderCell(int x, string label, int width, bool leftAlign, ProcessSortKey key)
     {
         bool active = _sortKey == key;
         string content = active

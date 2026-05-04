@@ -88,7 +88,9 @@ public sealed class App(AppState state) : IDisposable
             Y = 1,
             Width = Dim.Fill(),
             Height = Dim.Fill(1),
-            CanFocus = false,
+            // Must be focusable so SetFocus() on nested views (Process detail,
+            // command palette input, etc.) actually propagates.
+            CanFocus = true,
         };
         _statusBar = BuildStatusBar();
 
@@ -263,6 +265,14 @@ public sealed class App(AppState state) : IDisposable
 
     private void HookKeys(IApplication app)
     {
+        // TG v2 binds Esc to Application.Command.Quit by default. We use Esc
+        // for in-app navigation (back out of Process detail, close the
+        // command palette) and already have q / Ctrl+C for quitting, so
+        // remove the global binding.
+        var defaultQuit = Application.GetDefaultKey(Terminal.Gui.Input.Command.Quit);
+        if (defaultQuit is not null)
+            app.Keyboard.KeyBindings.Remove(defaultQuit);
+
         app.Keyboard.KeyDown += (_, key) =>
         {
             if (key is null) return;
@@ -339,18 +349,14 @@ public sealed class App(AppState state) : IDisposable
 
     private void DispatchCommand(string raw)
     {
-        var text = raw.TrimStart('/').Trim();
-        if (text.Length == 0) return;
+        var parsed = CommandParser.Parse(raw);
+        if (parsed is null) return;
 
-        var parts = text.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-        var verb = parts[0].ToLowerInvariant();
-        var arg = parts.Length > 1 ? parts[1].Trim() : "";
-
-        switch (verb)
+        switch (parsed.Verb)
         {
             case "process":
             case "p":
-                OpenProcessByCommand(arg);
+                OpenProcessByCommand(parsed.Arg);
                 break;
             case "quit":
             case "q":
