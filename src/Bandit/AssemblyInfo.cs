@@ -4,3 +4,7 @@ using System.Runtime.CompilerServices;
 // structs directly (no built-in runtime marshaller). All P/Invokes in this
 // assembly must therefore use blittable types and explicit string marshalling.
 [assembly: DisableRuntimeMarshalling]
+
+// Tests need to construct internal types (EVENT_RECORD struct, etc.) to
+// exercise the ETW event decoder.
+[assembly: InternalsVisibleTo("Bandit.Tests")]
