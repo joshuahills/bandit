@@ -98,14 +98,19 @@ public class CircularBufferTests
     {
         const int capacity = 1024;
         var buf = new CircularBuffer<int>(capacity);
-        using var hardTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var testCt = TestContext.Current.CancellationToken;
+
+        // Hard-timeout linked to the test's own cancellation token so the
+        // test stays responsive to xUnit shutdown / per-test timeouts.
+        using var hardTimeout = CancellationTokenSource.CreateLinkedTokenSource(testCt);
+        hardTimeout.CancelAfter(TimeSpan.FromSeconds(5));
         using var stop = new CancellationTokenSource();
 
         var writer = Task.Run(() =>
         {
             int i = 0;
             while (!stop.IsCancellationRequested) buf.Add(i++);
-        });
+        }, testCt);
 
         var reader = Task.Run(() =>
         {
@@ -114,18 +119,18 @@ public class CircularBufferTests
                 _ = buf.TailN(100);
                 _ = buf.Latest();
             }
-        });
+        }, testCt);
 
-        // Wait until the writer has filled the buffer (deterministic), or bail out
-        // after a generous overall timeout if something is wrong.
+        // Wait until the writer has filled the buffer (deterministic), or bail
+        // out after a generous overall timeout if something is wrong.
         while (buf.Count < capacity && !hardTimeout.IsCancellationRequested)
             await Task.Delay(10, hardTimeout.Token);
 
         stop.Cancel();
-        await Task.WhenAll(writer, reader);
+        await Task.WhenAll(writer, reader).WaitAsync(testCt);
 
-        // No exceptions = primary success criterion. The buffer should also be at
-        // capacity once the writer has been running long enough to fill it.
+        // No exceptions = primary success criterion. The buffer should also be
+        // at capacity once the writer has been running long enough to fill it.
         Assert.Equal(capacity, buf.Count);
     }
 }
