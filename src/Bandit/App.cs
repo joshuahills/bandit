@@ -25,6 +25,7 @@ public sealed class App(AppState state) : IDisposable
     private View? _statusBar;
     private View? _activeContent;
     private CommandPalette? _palette;
+    private IApplication? _app;
 
     public async Task RunAsync()
     {
@@ -39,6 +40,7 @@ public sealed class App(AppState state) : IDisposable
             _process.StartAsync(_cts.Token));
 
         using var app = CreateAndInitApp();
+        _app = app;
         try
         {
             BuildUi();
@@ -360,7 +362,7 @@ public sealed class App(AppState state) : IDisposable
                 break;
             case "quit":
             case "q":
-                Application.RequestStop();
+                _app?.RequestStop();
                 break;
         }
     }
