@@ -10,26 +10,31 @@ internal static class KernelNetworkEvents
 
     public readonly record struct Decoded(int Pid, int Bytes, Direction Direction);
 
-    // Microsoft-Windows-Kernel-Network event templates we care about. Tasks
-    // 1 (TCP) and 2 (UDP) cover both IPv4 (opcodes 10/11) and IPv6 (opcodes
-    // 26/27); the user-data layout starts with a 32-bit PID followed by a
-    // 32-bit size in all four templates, so we don't need to branch by task
-    // or address family for the bytes-by-process aggregation.
+    // Microsoft-Windows-Kernel-Network data-send / data-recv event IDs. We
+    // verified these against the canonical manifest with
+    //   wevtutil gp Microsoft-Windows-Kernel-Network /ge:true
+    // — the provider's tasks are 10 (TCP) and 11 (UDP), NOT 1 / 2, so a
+    // task-based match against 1 / 2 is silently always false. The Id field
+    // is the right discriminator and is unique per event template:
+    //   10 / 11 — TCP IPv4 send / recv
+    //   26 / 27 — TCP IPv6 send / recv
+    //   42 / 43 — UDP IPv4 send / recv
+    //   58 / 59 — UDP IPv6 send / recv
+    // The user-data layout (PID at offset 0, size at offset 4) is identical
+    // for all eight templates, so we don't branch by protocol/family beyond
+    // direction.
     public static unsafe bool TryDecode(ref readonly EVENT_RECORD record, out Decoded decoded)
     {
         decoded = default;
 
         if (record.EventHeader.ProviderId != ProviderId) return false;
 
-        var task = record.EventHeader.EventDescriptor.Task;
-        if (task != 1 && task != 2) return false;
-
-        var opcode = record.EventHeader.EventDescriptor.Opcode;
+        var id = record.EventHeader.EventDescriptor.Id;
         Direction direction;
-        switch (opcode)
+        switch (id)
         {
-            case 10: case 26: direction = Direction.Sent; break;
-            case 11: case 27: direction = Direction.Received; break;
+            case 10: case 26: case 42: case 58: direction = Direction.Sent;     break;
+            case 11: case 27: case 43: case 59: direction = Direction.Received; break;
             default: return false;
         }
 
