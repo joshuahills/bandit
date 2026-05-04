@@ -12,6 +12,7 @@ public sealed class SystemNetworkCollector : INetworkCollector
 
     public async Task StartAsync(CancellationToken ct)
     {
+        bool primed = false;
         while (!ct.IsCancellationRequested)
         {
             long deltaIn = 0, deltaOut = 0, deltaPktsIn = 0, deltaPktsOut = 0;
@@ -41,11 +42,12 @@ public sealed class SystemNetworkCollector : INetworkCollector
             }
             catch { /* interface enumeration can fail transiently */ }
 
-            if (_prev.Count > 0)
+            if (primed)
             {
                 var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 Samples.Add(new NetworkSample(now, deltaIn, deltaOut, deltaPktsIn, deltaPktsOut));
             }
+            primed = true;
 
             await Task.Delay(1000, ct).ConfigureAwait(false);
         }
