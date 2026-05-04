@@ -53,8 +53,20 @@ jobs:
       - name: Compute version
         shell: pwsh
         run: |
-          $version = "0.1.${{ github.run_number }}-pr.${{ github.event.pull_request.number }}"
+          # PR pre-release versions sit outside the prod (release.yml) line
+          # entirely:
+          #   0.0.0-pr.<PR>.<branch-commits>
+          # - 0.0.0 base means a PR build always sorts below any real release
+          #   under SemVer ('0.0.0-...' < '0.1.32'), regardless of what the
+          #   prod version line happens to be.
+          # - <PR> distinguishes concurrent PRs.
+          # - <branch-commits> bumps with every new push to the same PR, so
+          #   each commit gets a distinct version.
+          $prNumber = '${{ github.event.pull_request.number }}'
+          $branchCommits = '${{ github.event.pull_request.commits }}'
+          $version = "0.0.0-pr.$prNumber.$branchCommits"
           echo "VERSION=$version" >> $env:GITHUB_ENV
+          Write-Host "Version: $version"
 
       - name: Publish AOT exe
         run: dotnet publish src/Bandit/Bandit.csproj -c Release -r win-x64 /p:Version=${{ env.VERSION }} -o publish/exe
