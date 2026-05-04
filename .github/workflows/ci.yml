@@ -43,7 +43,13 @@ jobs:
       pull-requests: write
       contents: read
     steps:
+      # Check out the PR branch's actual head (not the merge ref) so commit
+      # counting reflects just what's on the branch. fetch-depth: 0 brings in
+      # all tags so we can read the latest released patch number.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -53,8 +59,18 @@ jobs:
       - name: Compute version
         shell: pwsh
         run: |
-          $version = "0.1.${{ github.run_number }}-pr.${{ github.event.pull_request.number }}"
+          # Master is at v0.1.<N>; the next release will be v0.1.<N+1>. PR
+          # builds pin to that next-patch number so they sort sensibly as
+          # pre-releases of the version they would land in.
+          $latestTag = git tag --list 'v0.1.*' --sort=-v:refname | Select-Object -First 1
+          $nextPatch = if ($latestTag) { [int]($latestTag -replace '^v0\.1\.', '') + 1 } else { 0 }
+
+          $prNumber = '${{ github.event.pull_request.number }}'
+          $branchCommits = '${{ github.event.pull_request.commits }}'
+
+          $version = "0.1.$nextPatch-pr.$prNumber.$branchCommits"
           echo "VERSION=$version" >> $env:GITHUB_ENV
+          Write-Host "Version: $version"
 
       - name: Publish AOT exe
         run: dotnet publish src/Bandit/Bandit.csproj -c Release -r win-x64 /p:Version=${{ env.VERSION }} -o publish/exe
