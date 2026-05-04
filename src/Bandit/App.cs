@@ -237,7 +237,7 @@ public sealed class App(AppState state) : IDisposable
             var code = key.KeyCode;
             if (code == KeyCode.Q || code == (KeyCode.Q | KeyCode.CtrlMask) || code == (KeyCode.C | KeyCode.CtrlMask))
             {
-                Application.RequestStop();
+                app.RequestStop();
                 key.Handled = true;
                 return;
             }
