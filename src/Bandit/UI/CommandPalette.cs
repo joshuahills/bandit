@@ -1,4 +1,3 @@
-using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Drivers;
 using Terminal.Gui.Input;
@@ -22,8 +21,6 @@ internal sealed class CommandPalette : Window
     public CommandPalette()
     {
         Title = " command ";
-        // Anchor full-width at the bottom of the screen, just above the
-        // app status bar, like a vim/emacs minibuffer.
         Width = Dim.Fill();
         Height = MaxCompletions + 4;
         X = 0;
@@ -47,23 +44,25 @@ internal sealed class CommandPalette : Window
         Add(_input, _completions);
 
         _input.KeyDown += OnInputKey;
+        _input.TextChanged += (_, _) => UpdateCompletions();
         UpdateCompletions();
     }
 
-    public void FocusInput() => _input.SetFocus();
+    public void FocusInput()
+    {
+        _input.SetFocus();
+        _input.InsertionPoint = _input.Text.Length;
+    }
 
     private void OnInputKey(object? sender, Key key)
     {
         switch (key.KeyCode)
         {
-            case KeyCode.Enter:
-                Submitted?.Invoke(this, _input.Text);
-                key.Handled = true;
-                break;
             case KeyCode.Esc:
                 Cancelled?.Invoke(this, EventArgs.Empty);
                 key.Handled = true;
                 break;
+
             case KeyCode.CursorDown:
                 if (_matches.Length > 0)
                 {
@@ -72,6 +71,7 @@ internal sealed class CommandPalette : Window
                     key.Handled = true;
                 }
                 break;
+
             case KeyCode.CursorUp:
                 if (_matches.Length > 0)
                 {
@@ -80,30 +80,79 @@ internal sealed class CommandPalette : Window
                     key.Handled = true;
                 }
                 break;
+
+            case KeyCode.Enter:
+                // If the typed command is already runnable (has args, or the
+                // verb takes none) submit it. Otherwise behave like Tab — pull
+                // the highlighted completion into the input.
+                if (LooksRunnable(_input.Text))
+                {
+                    Submitted?.Invoke(this, _input.Text);
+                }
+                else if (_matches.Length > 0)
+                {
+                    Complete(_matches[_highlight]);
+                }
+                key.Handled = true;
+                break;
+
             case KeyCode.Tab:
                 if (_matches.Length > 0)
                 {
-                    _input.Text = $"/{_matches[_highlight].Name} ";
-                    UpdateCompletions();
+                    Complete(_matches[_highlight]);
                     key.Handled = true;
                 }
-                break;
-            default:
-                // Recompute completions after the key has had a chance to
-                // mutate the TextField's Text (we read the field on the next
-                // event-loop tick).
-                Application.Invoke(UpdateCompletions);
                 break;
         }
     }
 
+    private static bool LooksRunnable(string text)
+    {
+        var parsed = CommandParser.Parse(text);
+        if (parsed is null) return false;
+
+        CommandSpec? spec = null;
+        foreach (var c in CommandRegistry.All)
+        {
+            if (c.Name.Equals(parsed.Verb, StringComparison.OrdinalIgnoreCase))
+            {
+                spec = c;
+                break;
+            }
+        }
+        if (spec is null) return false;
+
+        // Verbs that take no arg are runnable on verb match alone; verbs that
+        // need an arg require non-empty arg.
+        return string.IsNullOrEmpty(spec.ArgHint) || !string.IsNullOrEmpty(parsed.Arg);
+    }
+
+    private void Complete(CommandSpec spec)
+    {
+        _input.Text = string.IsNullOrEmpty(spec.ArgHint)
+            ? $"/{spec.Name}"
+            : $"/{spec.Name} ";
+        _input.InsertionPoint = _input.Text.Length;
+        UpdateCompletions();
+    }
+
     private void UpdateCompletions()
     {
-        var text = _input.Text;
-        var verb = text.Trim().TrimStart('/').Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-        var prefix = verb.Length > 0 ? verb[0] : "";
-        _matches = CommandRegistry.Match(prefix).Take(MaxCompletions).ToArray();
-        _highlight = Math.Clamp(_highlight, 0, Math.Max(0, _matches.Length - 1));
+        var trimmed = _input.Text.Trim().TrimStart('/').Trim();
+        var parts = trimmed.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        // Once the user has typed past the verb (entered a space), the verb is
+        // pinned — don't re-filter on the arg.
+        bool typedSpace = trimmed.Contains(' ');
+        var prefix = parts.Length > 0 ? parts[0] : "";
+
+        _matches = (typedSpace ? CommandRegistry.All.Where(c => c.Name.Equals(prefix, StringComparison.OrdinalIgnoreCase)) : CommandRegistry.Match(prefix))
+            .Take(MaxCompletions)
+            .ToArray();
+
+        if (_matches.Length == 0) _highlight = 0;
+        else if (_highlight >= _matches.Length) _highlight = _matches.Length - 1;
+        else if (_highlight < 0) _highlight = 0;
+
         RenderCompletions();
     }
 
