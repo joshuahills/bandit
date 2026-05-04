@@ -16,7 +16,7 @@
 
     <!-- .NET tool metadata (only used when PackAsTool=true). -->
     <ToolCommandName>bandit</ToolCommandName>
-    <PackageId>Bandit</PackageId>
+    <PackageId>Bandit.Cli</PackageId>
     <Authors>joshuahills</Authors>
     <Company>joshuahills</Company>
     <Description>btop-style network monitor TUI for Windows.</Description>
