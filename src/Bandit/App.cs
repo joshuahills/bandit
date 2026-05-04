@@ -4,6 +4,7 @@ using Bandit.Data.Collectors;
 using Bandit.UI;
 using Bandit.UI.Rendering;
 using Bandit.UI.Screens;
+using System.Diagnostics.CodeAnalysis;
 using Terminal.Gui.App;
 using Terminal.Gui.Configuration;
 using Terminal.Gui.Drawing;
@@ -36,7 +37,7 @@ public sealed class App(AppState state) : IDisposable
             _system.StartAsync(_cts.Token),
             _process.StartAsync(_cts.Token));
 
-        using var app = Application.Create().Init();
+        using var app = CreateAndInitApp();
         try
         {
             BuildUi();
@@ -50,6 +51,17 @@ public sealed class App(AppState state) : IDisposable
             await collectorTask.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
     }
+
+    // Terminal.Gui's Application.Init walks reflection-y paths (its
+    // ConfigurationManager, JSON converters, etc.) which we already preserve via
+    // <TrimmerRootAssembly Include="Terminal.Gui" /> in the csproj. Tell the
+    // trim/AOT analyzer that — narrowly, on this single call site, so any
+    // future reflection calls we add elsewhere still get flagged.
+    [UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Terminal.Gui rooted in csproj via TrimmerRootAssembly.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Terminal.Gui rooted in csproj via TrimmerRootAssembly.")]
+    private static IApplication CreateAndInitApp() => Application.Create().Init();
 
     private const string BanditScheme = "Bandit";
 
