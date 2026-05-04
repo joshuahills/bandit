@@ -1,6 +1,6 @@
 # Bandit
 
-btop-style network monitor TUI for Windows. .NET 10 + Native AOT — single-binary, fast start, low memory.
+btop-style network monitor TUI for Windows.
 
 ## Install
 
@@ -49,15 +49,6 @@ bandit --version
 ### Elevation
 
 System-wide bandwidth charts work without admin. Per-process tracking (Processes screen) requires running from an elevated terminal — it uses ETW, which is admin-only on Windows.
-
-## Build from source
-
-.NET 10 SDK required. AOT publish needs the MSVC linker on `PATH` — easiest path is opening Visual Studio's *Developer Command Prompt* or publishing from VS directly.
-
-```
-dotnet build src/Bandit/Bandit.csproj
-dotnet publish src/Bandit/Bandit.csproj -c Release -r win-x64
-```
 
 ## License
 
