@@ -49,19 +49,25 @@ public sealed class BandwidthChart : View
     {
         var canvas = new BrailleCanvas(chartWidth, chartHeight);
         int dotW = canvas.DotWidth;
+        int dotH = canvas.DotHeight;
 
         for (int dotX = 0; dotX < dotW; dotX++)
         {
-            int idx = (int)((long)dotX * Samples.Length / dotW);
-            if (idx >= Samples.Length) idx = Samples.Length - 1;
+            double sampleF = dotW <= 1
+                ? 0
+                : (double)dotX / (dotW - 1) * (Samples.Length - 1);
+            int idx0 = (int)Math.Floor(sampleF);
+            int idx1 = Math.Min(idx0 + 1, Samples.Length - 1);
+            double t = sampleF - idx0;
+            double value = Samples[idx0].TotalBytes * (1 - t) + Samples[idx1].TotalBytes * t;
 
-            double frac = Samples[idx].TotalBytes / maxValue;
+            double frac = value / maxValue;
             if (frac < 0) frac = 0;
             if (frac > 1) frac = 1;
-            int dotFromBottom = (int)(frac * canvas.DotHeight);
-            int dotYTop = canvas.DotHeight - dotFromBottom;
+            int dotFromBottom = (int)Math.Round(frac * dotH);
+            int dotYTop = dotH - dotFromBottom;
             if (dotYTop < 0) dotYTop = 0;
-            if (dotYTop >= canvas.DotHeight) continue;
+            if (dotYTop >= dotH) continue;
 
             canvas.FillBelow(dotX, dotYTop);
         }

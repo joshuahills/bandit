@@ -131,21 +131,52 @@ public sealed class App(AppState state) : IDisposable
             CanFocus = false,
         };
 
+        const string prefix = " timescale ";
+        bar.Add(new ColoredLabel(prefix, Theme.StatusAttr)
+        {
+            X = 0, Y = 0, Width = prefix.Length,
+        });
+
+        int x = prefix.Length;
+        for (int i = 0; i < AppState.TimescaleLabels.Length; i++)
+        {
+            bool active = i == state.TimescaleIndex;
+            string segment = active ? $"[{AppState.TimescaleLabels[i]}]" : $" {AppState.TimescaleLabels[i]} ";
+            int captured = i;
+            var seg = new ColoredLabel(segment, active ? Theme.ActiveTabAttr : Theme.InactiveTabAttr)
+            {
+                X = x, Y = 0, Width = segment.Length,
+            };
+            seg.MouseEvent += (_, m) =>
+            {
+                if (m.IsSingleClicked)
+                {
+                    state.TimescaleIndex = captured;
+                    RefreshStatusBar();
+                    m.Handled = true;
+                }
+            };
+            bar.Add(seg);
+            x += segment.Length;
+        }
+
+        string hint = state.IsElevated
+            ? "   [/] cycle   q:quit "
+            : "   [/] cycle   q:quit   [!] Not elevated ";
+        bar.Add(new ColoredLabel(hint, Theme.DimAttr)
+        {
+            X = x, Y = 0, Width = hint.Length,
+        });
+
         var latest = _system.Samples.Latest();
         string rates = latest is { } s
             ? $" ↑ {BandwidthChart.FormatBytesPerSec(s.BytesOut)}/s  ↓ {BandwidthChart.FormatBytesPerSec(s.BytesIn)}/s "
             : " ↑ ---  ↓ --- ";
-        string elev = state.IsElevated ? "" : "  [!] Not elevated";
-        string left = $" [{state.TimescaleLabel}] timescale: [ ]   q:quit{elev}";
-
-        bar.Add(new ColoredLabel(left, Theme.StatusAttr)
-        {
-            X = 0, Y = 0, Width = Dim.Fill(rates.Length),
-        });
         bar.Add(new ColoredLabel(rates, Theme.AccentAttr)
         {
             X = Pos.AnchorEnd(rates.Length), Y = 0, Width = rates.Length,
         });
+
         return bar;
     }
 
