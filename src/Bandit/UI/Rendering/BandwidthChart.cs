@@ -65,26 +65,41 @@ public sealed class BandwidthChart : View
         int dotW = canvas.DotWidth;
         int dotH = canvas.DotHeight;
 
+        // Map each dot column to a real point in time relative to the right edge ("now").
+        // Right edge = newest sample (age 0). Left edge = TimescaleSeconds ago. Samples
+        // are 1-per-second, so dot columns that fall outside the available history stay
+        // blank rather than stretching the data across the whole chart.
+        double timescale = Math.Max(1, TimescaleSeconds);
+        double secondsAvailable = Samples.Length - 1;
+
         int prevDotY = -1;
+        bool prevValid = false;
+
         for (int dotX = 0; dotX < dotW; dotX++)
         {
-            double sampleF = dotW <= 1
-                ? 0
-                : (double)dotX / (dotW - 1) * (Samples.Length - 1);
-            int idx0 = (int)Math.Floor(sampleF);
-            int idx1 = Math.Min(idx0 + 1, Samples.Length - 1);
-            double t = sampleF - idx0;
+            double frac = dotW <= 1 ? 1 : (double)dotX / (dotW - 1);
+            double ageSeconds = (1 - frac) * timescale;
+            if (ageSeconds > secondsAvailable)
+            {
+                prevValid = false;
+                continue;
+            }
+
+            double sampleIdx = (Samples.Length - 1) - ageSeconds;
+            int idx0 = Math.Max(0, (int)Math.Floor(sampleIdx));
+            int idx1 = Math.Min(Samples.Length - 1, idx0 + 1);
+            double t = sampleIdx - idx0;
             double value = selector(Samples[idx0]) * (1 - t) + selector(Samples[idx1]) * t;
 
-            double frac = value / maxValue;
-            if (frac < 0) frac = 0;
-            if (frac > 1) frac = 1;
-            int dotFromBottom = (int)Math.Round(frac * (dotH - 1));
+            double valFrac = value / maxValue;
+            if (valFrac < 0) valFrac = 0;
+            if (valFrac > 1) valFrac = 1;
+            int dotFromBottom = (int)Math.Round(valFrac * (dotH - 1));
             int dotY = dotH - 1 - dotFromBottom;
             if (dotY < 0) dotY = 0;
             if (dotY >= dotH) dotY = dotH - 1;
 
-            if (prevDotY < 0)
+            if (!prevValid)
             {
                 canvas.SetDot(dotX, dotY);
             }
@@ -96,6 +111,7 @@ public sealed class BandwidthChart : View
                     canvas.SetDot(dotX, y);
             }
             prevDotY = dotY;
+            prevValid = true;
         }
 
         SetAttribute(attribute);
