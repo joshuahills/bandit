@@ -24,6 +24,7 @@ public sealed class App(AppState state) : IDisposable
     private View? _header;
     private View? _statusBar;
     private View? _activeContent;
+    private CommandPalette? _palette;
 
     public async Task RunAsync()
     {
@@ -266,6 +267,10 @@ public sealed class App(AppState state) : IDisposable
         {
             if (key is null) return;
 
+            // When the command palette is open, leave keys alone — let the
+            // focused TextField inside it consume them.
+            if (_palette is not null) return;
+
             var code = key.KeyCode;
             if (code == KeyCode.Q || code == (KeyCode.Q | KeyCode.CtrlMask) || code == (KeyCode.C | KeyCode.CtrlMask))
             {
@@ -299,7 +304,73 @@ public sealed class App(AppState state) : IDisposable
                 _screens[state.ActiveScreenIndex].Refresh();
                 key.Handled = true;
             }
+            else if (rune == '/')
+            {
+                OpenPalette();
+                key.Handled = true;
+            }
         };
+    }
+
+    private void OpenPalette()
+    {
+        if (_palette is not null || _window is null) return;
+        _palette = new CommandPalette();
+        _palette.Submitted += OnPaletteSubmitted;
+        _palette.Cancelled += (_, _) => ClosePalette();
+        _window.Add(_palette);
+        _palette.FocusInput();
+    }
+
+    private void ClosePalette()
+    {
+        if (_palette is null || _window is null) return;
+        _window.Remove(_palette);
+        _palette.Dispose();
+        _palette = null;
+        _activeContent?.SetFocus();
+    }
+
+    private void OnPaletteSubmitted(object? sender, string text)
+    {
+        ClosePalette();
+        DispatchCommand(text);
+    }
+
+    private void DispatchCommand(string raw)
+    {
+        var text = raw.TrimStart('/').Trim();
+        if (text.Length == 0) return;
+
+        var parts = text.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var verb = parts[0].ToLowerInvariant();
+        var arg = parts.Length > 1 ? parts[1].Trim() : "";
+
+        switch (verb)
+        {
+            case "process":
+            case "p":
+                OpenProcessByCommand(arg);
+                break;
+            case "quit":
+            case "q":
+                Application.RequestStop();
+                break;
+        }
+    }
+
+    private void OpenProcessByCommand(string arg)
+    {
+        if (string.IsNullOrEmpty(arg)) return;
+
+        var processScreen = _screens.OfType<ProcessScreen>().FirstOrDefault();
+        if (processScreen is null) return;
+
+        int? pid = int.TryParse(arg, out var p) ? p : processScreen.FindPidByName(arg);
+        if (pid is null) return;
+
+        SwitchScreen(processScreen.Index);
+        processScreen.OpenDetail(pid.Value);
     }
 
     private void ScheduleRefresh(IApplication app)

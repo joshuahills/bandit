@@ -17,6 +17,7 @@ public static class Theme
     public static readonly Color Warning = new(255, 200, 50);
     public static readonly Color Dim = new(70, 70, 90);
     public static readonly Color Background = new(12, 12, 22);
+    public static readonly Color SelectedRowBg = new(40, 50, 80);
 
     public static readonly Attribute UploadAttr = new(Upload, Background);
     public static readonly Attribute DownloadAttr = new(Download, Background);
@@ -28,4 +29,10 @@ public static class Theme
     public static readonly Attribute DimAttr = new(Dim, Background);
     public static readonly Attribute ActiveTabAttr = new(ActiveTab, Background);
     public static readonly Attribute InactiveTabAttr = new(InactiveTab, Background);
+
+    // Row-selected variants — same fg as the unselected version, brighter bg.
+    public static readonly Attribute SelectedPidAttr = new(StatusFg, SelectedRowBg);
+    public static readonly Attribute SelectedNameAttr = new(Accent, SelectedRowBg);
+    public static readonly Attribute SelectedUploadAttr = new(Upload, SelectedRowBg);
+    public static readonly Attribute SelectedDownloadAttr = new(Download, SelectedRowBg);
 }
