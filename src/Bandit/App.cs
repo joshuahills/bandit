@@ -53,18 +53,29 @@ public sealed class App(AppState state)
         .Fill()
         .WithInputBindings(bindings =>
         {
-            bindings.Character(t => t is "1" or "2" or "3" or "4" or "5" or "6" or "7" or "8" or "9")
-                .Action(t =>
-                {
-                    int idx = int.Parse(t) - 1;
-                    if (idx < _screens.Length) state.ActiveScreenIndex = idx;
-                }, "Switch screen");
+            BindScreenSwitch(bindings, Hex1bKey.D1, 0);
+            BindScreenSwitch(bindings, Hex1bKey.D2, 1);
+            BindScreenSwitch(bindings, Hex1bKey.D3, 2);
+            BindScreenSwitch(bindings, Hex1bKey.D4, 3);
+            BindScreenSwitch(bindings, Hex1bKey.D5, 4);
+            BindScreenSwitch(bindings, Hex1bKey.D6, 5);
+            BindScreenSwitch(bindings, Hex1bKey.D7, 6);
+            BindScreenSwitch(bindings, Hex1bKey.D8, 7);
+            BindScreenSwitch(bindings, Hex1bKey.D9, 8);
 
-            bindings.Character(t => t == "[").Action(_ => state.CycleTimescaleDown(), "Timescale -");
-            bindings.Character(t => t == "]").Action(_ => state.CycleTimescaleUp(), "Timescale +");
-            bindings.Key(Hex1bKey.Q).Action(c => c.RequestStop(), "Quit");
-            bindings.Ctrl().Key(Hex1bKey.C).Action(c => c.RequestStop(), "Quit");
+            bindings.Key(Hex1bKey.Oem4).Global().Action(_ => state.CycleTimescaleDown(), "Timescale -");
+            bindings.Key(Hex1bKey.Oem6).Global().Action(_ => state.CycleTimescaleUp(), "Timescale +");
+            bindings.Key(Hex1bKey.Q).Global().Action(c => c.RequestStop(), "Quit");
+            bindings.Ctrl().Key(Hex1bKey.C).Global().Action(c => c.RequestStop(), "Quit");
         });
+    }
+
+    private void BindScreenSwitch(InputBindingsBuilder bindings, Hex1bKey key, int index)
+    {
+        bindings.Key(key).Global().Action(_ =>
+        {
+            if (index < _screens.Length) state.ActiveScreenIndex = index;
+        }, $"Screen {index + 1}");
     }
 
     private Hex1bWidget BuildHeader(WidgetContext<VStackWidget> b)
@@ -72,11 +83,14 @@ public sealed class App(AppState state)
         return b.HStack(h =>
         [
             h.Text(" ◈ BANDIT  ", Theme.Accent),
-            .. _screens.Select(s =>
+            .. _screens.Select(screen =>
             {
-                bool active = s.Index == state.ActiveScreenIndex;
-                string label = $" [{s.Index + 1}] {s.Title} ";
-                return h.Text(label, active ? Theme.ActiveTab : Theme.InactiveTab);
+                bool active = screen.Index == state.ActiveScreenIndex;
+                string label = $" [{screen.Index + 1}] {screen.Title} ";
+                var color = active ? Theme.ActiveTab : Theme.InactiveTab;
+                int captured = screen.Index;
+                return (Hex1bWidget)h.Interactable(ic => ic.Text(label, color))
+                    .OnClick(_ => state.ActiveScreenIndex = captured);
             }),
         ]);
     }
@@ -92,7 +106,7 @@ public sealed class App(AppState state)
 
         return b.HStack(h =>
         [
-            h.Text($" [{state.TimescaleLabel}] [/] timescale  q:quit{elev}", Theme.StatusFg),
+            h.Text($" [{state.TimescaleLabel}] timescale: [ ]   q:quit{elev}", Theme.StatusFg),
             h.Text(rates, Theme.Accent),
         ]);
     }
