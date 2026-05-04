@@ -11,19 +11,9 @@ public sealed class ProcessNetworkCollector : INetworkCollector, IDisposable
 
     public CollectorStatus Status { get; private set; } = CollectorStatus.NotStarted;
     public string? StartError { get; private set; }
-    public long RawEventsSeen => Interlocked.Read(ref _rawEvents);
-    public long DecodedEventsSeen => Interlocked.Read(ref _decodedEvents);
 
-    public IReadOnlyDictionary<long, long> EventShapeHistogram
-    {
-        get { lock (_lock) return new Dictionary<long, long>(_shapes); }
-    }
-
-    private long _rawEvents;
-    private long _decodedEvents;
     private readonly Dictionary<int, long> _runningIn = [];
     private readonly Dictionary<int, long> _runningOut = [];
-    private readonly Dictionary<long, long> _shapes = [];
     private readonly Lock _lock = new();
     private readonly ProcessNameCache _names = new();
 
@@ -60,21 +50,7 @@ public sealed class ProcessNetworkCollector : INetworkCollector, IDisposable
 
     private void OnEvent(ref readonly EVENT_RECORD record)
     {
-        Interlocked.Increment(ref _rawEvents);
-
-        // Pack Id/Task/Opcode into one long for the histogram so we can see
-        // which event templates we're actually receiving.
-        long shape = ((long)record.EventHeader.EventDescriptor.Id << 24)
-                   | ((long)record.EventHeader.EventDescriptor.Task << 8)
-                   | (long)record.EventHeader.EventDescriptor.Opcode;
-        lock (_lock)
-        {
-            _shapes.TryGetValue(shape, out var count);
-            _shapes[shape] = count + 1;
-        }
-
         if (!KernelNetworkEvents.TryDecode(in record, out var decoded)) return;
-        Interlocked.Increment(ref _decodedEvents);
 
         lock (_lock)
         {
