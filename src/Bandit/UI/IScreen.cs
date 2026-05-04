@@ -1,5 +1,4 @@
-using Hex1b;
-using Hex1b.Widgets;
+using Terminal.Gui.ViewBase;
 
 namespace Bandit.UI;
 
@@ -7,5 +6,6 @@ public interface IScreen
 {
     int Index { get; }
     string Title { get; }
-    Hex1bWidget Build(RootContext ctx);
+    View Build();
+    void Refresh();
 }

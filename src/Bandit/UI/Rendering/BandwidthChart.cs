@@ -1,45 +1,61 @@
+using System.Text;
 using Bandit.Data.Models;
-using Hex1b.Surfaces;
-using Hex1b.Widgets;
+using Terminal.Gui.Drawing;
+using Terminal.Gui.ViewBase;
 
 namespace Bandit.UI.Rendering;
 
-public static class BandwidthChart
+public sealed class BandwidthChart : View
 {
     private const int AxisWidth = 8;
     private const int GridRows = 4;
 
-    public static SurfaceLayer BuildLayer(SurfaceLayerContext s, NetworkSample[] samples)
-        => s.Layer(surface => DrawChart(surface, samples), 0, 0);
+    public NetworkSample[] Samples { get; set; } = [];
 
-    private static void DrawChart(Surface surface, NetworkSample[] samples)
+    public BandwidthChart()
     {
-        int chartWidth = Math.Max(1, surface.Width - AxisWidth);
-        int chartHeight = Math.Max(1, surface.Height);
+        CanFocus = false;
+    }
 
-        if (samples.Length == 0)
+    protected override bool OnDrawingContent(DrawContext? context)
+    {
+        int width = Viewport.Width;
+        int height = Viewport.Height;
+        if (width <= 0 || height <= 0) return true;
+
+        int chartWidth = Math.Max(1, width - AxisWidth);
+
+        if (Samples.Length == 0)
         {
-            surface.WriteText(AxisWidth, chartHeight / 2, " Waiting for data… ", Theme.Dim, null, default);
-            return;
+            SetAttribute(Theme.DimAttr);
+            string msg = " Waiting for data… ";
+            DrawString(AxisWidth, height / 2, msg);
+            return true;
         }
 
         double maxValue = 1000;
-        foreach (var sample in samples)
+        foreach (var sample in Samples)
             if (sample.TotalBytes > maxValue) maxValue = sample.TotalBytes;
         maxValue *= 1.15;
 
-        DrawGrid(surface, chartHeight);
-        DrawYAxis(surface, chartHeight, maxValue);
+        DrawGrid(chartWidth, height);
+        DrawYAxis(height, maxValue);
+        DrawBrailleArea(chartWidth, height, maxValue);
+        DrawTopRightLabel(width);
+        return true;
+    }
 
+    private void DrawBrailleArea(int chartWidth, int chartHeight, double maxValue)
+    {
         var canvas = new BrailleCanvas(chartWidth, chartHeight);
         int dotW = canvas.DotWidth;
 
         for (int dotX = 0; dotX < dotW; dotX++)
         {
-            int idx = (int)((long)dotX * samples.Length / dotW);
-            if (idx >= samples.Length) idx = samples.Length - 1;
+            int idx = (int)((long)dotX * Samples.Length / dotW);
+            if (idx >= Samples.Length) idx = Samples.Length - 1;
 
-            double frac = samples[idx].TotalBytes / maxValue;
+            double frac = Samples[idx].TotalBytes / maxValue;
             if (frac < 0) frac = 0;
             if (frac > 1) frac = 1;
             int dotFromBottom = (int)(frac * canvas.DotHeight);
@@ -50,40 +66,58 @@ public static class BandwidthChart
             canvas.FillBelow(dotX, dotYTop);
         }
 
+        SetAttribute(Theme.UploadAttr);
         for (int cy = 0; cy < chartHeight; cy++)
             for (int cx = 0; cx < chartWidth; cx++)
             {
                 char? cell = canvas.GetCell(cx, cy);
-                if (cell is not null)
-                    surface.WriteText(AxisWidth + cx, cy, cell.Value.ToString(), Theme.Upload, null, default);
+                if (cell is null) continue;
+                Move(AxisWidth + cx, cy);
+                AddRune(new System.Text.Rune(cell.Value));
             }
-
-        var latest = samples[^1];
-        string label = $" ↑{FormatBytesPerSec(latest.BytesOut)}/s ↓{FormatBytesPerSec(latest.BytesIn)}/s ";
-        int labelX = Math.Max(AxisWidth, surface.Width - label.Length);
-        surface.WriteText(labelX, 0, label, Theme.StatusFg, null, default);
     }
 
-    private static void DrawGrid(Surface surface, int chartHeight)
+    private void DrawGrid(int chartWidth, int chartHeight)
     {
-        int chartWidth = surface.Width - AxisWidth;
+        SetAttribute(Theme.GridAttr);
+        var dot = new System.Text.Rune('·');
         for (int row = 1; row < GridRows; row++)
         {
             int y = chartHeight - 1 - (row * (chartHeight - 1) / GridRows);
             for (int x = 0; x < chartWidth; x++)
-                surface.WriteChar(AxisWidth + x, y, '·', Theme.Grid, null, default);
+            {
+                Move(AxisWidth + x, y);
+                AddRune(dot);
+            }
         }
     }
 
-    private static void DrawYAxis(Surface surface, int chartHeight, double maxValue)
+    private void DrawYAxis(int chartHeight, double maxValue)
     {
+        SetAttribute(Theme.AxisAttr);
         for (int row = 0; row <= GridRows; row++)
         {
             int y = chartHeight - 1 - (row * (chartHeight - 1) / GridRows);
             double value = maxValue * row / GridRows;
             string label = FormatBytesPerSec(value).PadLeft(AxisWidth - 1) + " ";
-            surface.WriteText(0, y, label, Theme.Axis, null, default);
+            DrawString(0, y, label);
         }
+    }
+
+    private void DrawTopRightLabel(int width)
+    {
+        var latest = Samples[^1];
+        string label = $" ↑{FormatBytesPerSec(latest.BytesOut)}/s ↓{FormatBytesPerSec(latest.BytesIn)}/s ";
+        int labelX = Math.Max(AxisWidth, width - label.Length);
+        SetAttribute(Theme.StatusAttr);
+        DrawString(labelX, 0, label);
+    }
+
+    private void DrawString(int x, int y, string text)
+    {
+        Move(x, y);
+        foreach (var rune in text.EnumerateRunes())
+            AddRune(rune);
     }
 
     public static string FormatBytesPerSec(double bytes)

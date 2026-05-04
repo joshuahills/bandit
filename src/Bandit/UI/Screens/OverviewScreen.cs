@@ -1,7 +1,6 @@
 using Bandit.Data.Collectors;
 using Bandit.UI.Rendering;
-using Hex1b;
-using Hex1b.Widgets;
+using Terminal.Gui.ViewBase;
 
 namespace Bandit.UI.Screens;
 
@@ -10,12 +9,25 @@ public sealed class OverviewScreen(AppState state, SystemNetworkCollector collec
     public int Index => 0;
     public string Title => "Overview";
 
-    public Hex1bWidget Build(RootContext ctx)
-    {
-        var samples = collector.Samples.TailN(state.TimescaleSeconds);
+    private BandwidthChart? _chart;
 
-        return ctx.Surface(s => [BandwidthChart.BuildLayer(s, samples)])
-            .RedrawAfter(1000)
-            .Fill();
+    public View Build()
+    {
+        _chart = new BandwidthChart
+        {
+            X = 0,
+            Y = 0,
+            Width = Dim.Fill(),
+            Height = Dim.Fill(),
+        };
+        Refresh();
+        return _chart;
+    }
+
+    public void Refresh()
+    {
+        if (_chart is null) return;
+        _chart.Samples = collector.Samples.TailN(state.TimescaleSeconds);
+        _chart.SetNeedsDraw();
     }
 }

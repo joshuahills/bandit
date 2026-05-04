@@ -2,17 +2,27 @@ using Bandit.Data.Collectors;
 using Bandit.UI;
 using Bandit.UI.Rendering;
 using Bandit.UI.Screens;
-using Hex1b;
-using Hex1b.Input;
-using Hex1b.Widgets;
+using Terminal.Gui.App;
+using Terminal.Gui.Drawing;
+using Terminal.Gui.Drivers;
+using Terminal.Gui.Input;
+using Terminal.Gui.ViewBase;
+using Terminal.Gui.Views;
 
 namespace Bandit;
 
-public sealed class App(AppState state)
+public sealed class App(AppState state) : IDisposable
 {
     private readonly SystemNetworkCollector _system = new();
     private readonly ProcessNetworkCollector _process = new(state.IsElevated);
+    private readonly CancellationTokenSource _cts = new();
+
     private IScreen[] _screens = [];
+    private Window? _window;
+    private View? _contentHost;
+    private View? _header;
+    private View? _statusBar;
+    private View? _activeContent;
 
     public async Task RunAsync()
     {
@@ -22,92 +32,213 @@ public sealed class App(AppState state)
             new ProcessScreen(state, _process),
         ];
 
-        using var cts = new CancellationTokenSource();
-
         var collectorTask = Task.WhenAll(
-            _system.StartAsync(cts.Token),
-            _process.StartAsync(cts.Token));
+            _system.StartAsync(_cts.Token),
+            _process.StartAsync(_cts.Token));
 
-        using var app = new Hex1bApp(BuildRoot);
+        using var app = Application.Create().Init();
         try
         {
-            await app.RunAsync(cts.Token);
+            BuildUi();
+            HookKeys(app);
+            ScheduleRefresh(app);
+            app.Run(_window!);
         }
         finally
         {
-            cts.Cancel();
+            _cts.Cancel();
             await collectorTask.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
     }
 
-    private Hex1bWidget BuildRoot(RootContext ctx)
+    private void BuildUi()
     {
-        var activeScreen = _screens[state.ActiveScreenIndex];
-
-        return ctx.VStack(b =>
-        [
-            BuildHeader(b),
-            activeScreen.Build(ctx).Fill(),
-            BuildStatusBar(b),
-        ])
-        .Fill()
-        .WithInputBindings(bindings =>
+        _window = new Window
         {
-            BindScreenSwitch(bindings, Hex1bKey.D1, 0);
-            BindScreenSwitch(bindings, Hex1bKey.D2, 1);
-            BindScreenSwitch(bindings, Hex1bKey.D3, 2);
-            BindScreenSwitch(bindings, Hex1bKey.D4, 3);
-            BindScreenSwitch(bindings, Hex1bKey.D5, 4);
-            BindScreenSwitch(bindings, Hex1bKey.D6, 5);
-            BindScreenSwitch(bindings, Hex1bKey.D7, 6);
-            BindScreenSwitch(bindings, Hex1bKey.D8, 7);
-            BindScreenSwitch(bindings, Hex1bKey.D9, 8);
+            X = 0,
+            Y = 0,
+            Width = Dim.Fill(),
+            Height = Dim.Fill(),
+            Title = string.Empty,
+            BorderStyle = LineStyle.None,
+        };
 
-            bindings.Key(Hex1bKey.Oem4).Global().Action(_ => state.CycleTimescaleDown(), "Timescale -");
-            bindings.Key(Hex1bKey.Oem6).Global().Action(_ => state.CycleTimescaleUp(), "Timescale +");
-            bindings.Key(Hex1bKey.Q).Global().Action(c => c.RequestStop(), "Quit");
-            bindings.Ctrl().Key(Hex1bKey.C).Global().Action(c => c.RequestStop(), "Quit");
+        _header = BuildHeader();
+        _contentHost = new View
+        {
+            X = 0,
+            Y = 1,
+            Width = Dim.Fill(),
+            Height = Dim.Fill(1),
+            CanFocus = false,
+        };
+        _statusBar = BuildStatusBar();
+
+        _window.Add(_header, _contentHost, _statusBar);
+        SwapToActiveScreen();
+    }
+
+    private View BuildHeader()
+    {
+        var header = new View
+        {
+            X = 0,
+            Y = 0,
+            Width = Dim.Fill(),
+            Height = 1,
+            CanFocus = false,
+        };
+
+        const string brandText = " ◈ BANDIT  ";
+        header.Add(new ColoredLabel(brandText, Theme.AccentAttr)
+        {
+            X = 0, Y = 0, Width = brandText.Length,
         });
-    }
 
-    private void BindScreenSwitch(InputBindingsBuilder bindings, Hex1bKey key, int index)
-    {
-        bindings.Key(key).Global().Action(_ =>
+        int x = brandText.Length;
+        foreach (var screen in _screens)
         {
-            if (index < _screens.Length) state.ActiveScreenIndex = index;
-        }, $"Screen {index + 1}");
-    }
-
-    private Hex1bWidget BuildHeader(WidgetContext<VStackWidget> b)
-    {
-        return b.HStack(h =>
-        [
-            h.Text(" ◈ BANDIT  ", Theme.Accent),
-            .. _screens.Select(screen =>
+            string label = $" [{screen.Index + 1}] {screen.Title} ";
+            int captured = screen.Index;
+            var attr = screen.Index == state.ActiveScreenIndex ? Theme.ActiveTabAttr : Theme.InactiveTabAttr;
+            var tab = new ColoredLabel(label, attr)
             {
-                bool active = screen.Index == state.ActiveScreenIndex;
-                string label = $" [{screen.Index + 1}] {screen.Title} ";
-                var color = active ? Theme.ActiveTab : Theme.InactiveTab;
-                int captured = screen.Index;
-                return (Hex1bWidget)h.Interactable(ic => ic.Text(label, color))
-                    .OnClick(_ => state.ActiveScreenIndex = captured);
-            }),
-        ]);
+                X = x, Y = 0, Width = label.Length,
+            };
+            tab.MouseEvent += (_, m) =>
+            {
+                if (m.IsSingleClicked)
+                {
+                    SwitchScreen(captured);
+                    m.Handled = true;
+                }
+            };
+            header.Add(tab);
+            x += label.Length;
+        }
+
+        return header;
     }
 
-    private Hex1bWidget BuildStatusBar(WidgetContext<VStackWidget> b)
+    private View BuildStatusBar()
     {
+        var bar = new View
+        {
+            X = 0,
+            Y = Pos.AnchorEnd(1),
+            Width = Dim.Fill(),
+            Height = 1,
+            CanFocus = false,
+        };
+
         var latest = _system.Samples.Latest();
         string rates = latest is { } s
             ? $" ↑ {BandwidthChart.FormatBytesPerSec(s.BytesOut)}/s  ↓ {BandwidthChart.FormatBytesPerSec(s.BytesIn)}/s "
             : " ↑ ---  ↓ --- ";
-
         string elev = state.IsElevated ? "" : "  [!] Not elevated";
+        string left = $" [{state.TimescaleLabel}] timescale: [ ]   q:quit{elev}";
 
-        return b.HStack(h =>
-        [
-            h.Text($" [{state.TimescaleLabel}] timescale: [ ]   q:quit{elev}", Theme.StatusFg),
-            h.Text(rates, Theme.Accent),
-        ]);
+        bar.Add(new ColoredLabel(left, Theme.StatusAttr)
+        {
+            X = 0, Y = 0, Width = Dim.Fill(rates.Length),
+        });
+        bar.Add(new ColoredLabel(rates, Theme.AccentAttr)
+        {
+            X = Pos.AnchorEnd(rates.Length), Y = 0, Width = rates.Length,
+        });
+        return bar;
     }
+
+    private void RefreshHeader()
+    {
+        if (_window is null || _header is null) return;
+        _window.Remove(_header);
+        _header = BuildHeader();
+        _window.Add(_header);
+        _window.SetNeedsDraw();
+    }
+
+    private void RefreshStatusBar()
+    {
+        if (_window is null || _statusBar is null) return;
+        _window.Remove(_statusBar);
+        _statusBar = BuildStatusBar();
+        _window.Add(_statusBar);
+        _window.SetNeedsDraw();
+    }
+
+    private void SwapToActiveScreen()
+    {
+        if (_contentHost is null) return;
+        if (_activeContent is not null)
+        {
+            _contentHost.Remove(_activeContent);
+            _activeContent.Dispose();
+        }
+        _activeContent = _screens[state.ActiveScreenIndex].Build();
+        _contentHost.Add(_activeContent);
+        _contentHost.SetNeedsDraw();
+    }
+
+    private void SwitchScreen(int index)
+    {
+        if (index < 0 || index >= _screens.Length) return;
+        if (state.ActiveScreenIndex == index) return;
+        state.ActiveScreenIndex = index;
+        RefreshHeader();
+        SwapToActiveScreen();
+    }
+
+    private void HookKeys(IApplication app)
+    {
+        app.Keyboard.KeyDown += (_, key) =>
+        {
+            if (key is null) return;
+
+            var code = key.KeyCode;
+            if (code == KeyCode.Q || code == (KeyCode.Q | KeyCode.CtrlMask) || code == (KeyCode.C | KeyCode.CtrlMask))
+            {
+                Application.RequestStop();
+                key.Handled = true;
+                return;
+            }
+
+            for (int i = 0; i < _screens.Length && i < 9; i++)
+            {
+                if (code == (KeyCode)((int)KeyCode.D1 + i))
+                {
+                    SwitchScreen(i);
+                    key.Handled = true;
+                    return;
+                }
+            }
+
+            int rune = key.AsRune.Value;
+            if (rune == '[')
+            {
+                state.CycleTimescaleDown();
+                RefreshStatusBar();
+                key.Handled = true;
+            }
+            else if (rune == ']')
+            {
+                state.CycleTimescaleUp();
+                RefreshStatusBar();
+                key.Handled = true;
+            }
+        };
+    }
+
+    private void ScheduleRefresh(IApplication app)
+    {
+        app.AddTimeout(TimeSpan.FromSeconds(1), () =>
+        {
+            if (_cts.IsCancellationRequested) return false;
+            _screens[state.ActiveScreenIndex].Refresh();
+            RefreshStatusBar();
+            return true;
+        });
+    }
+
+    public void Dispose() => _cts.Dispose();
 }

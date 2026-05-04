@@ -1,6 +1,5 @@
 using Bandit.Data.Collectors;
-using Hex1b;
-using Hex1b.Widgets;
+using Terminal.Gui.ViewBase;
 
 namespace Bandit.UI.Screens;
 
@@ -9,27 +8,51 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
     public int Index => 1;
     public string Title => "Processes";
 
-    public Hex1bWidget Build(RootContext ctx)
+    public void Refresh() { }
+
+    public View Build()
     {
         _ = state;
 
+        var container = new View
+        {
+            X = 0,
+            Y = 0,
+            Width = Dim.Fill(),
+            Height = Dim.Fill(),
+            CanFocus = false,
+        };
+
         if (!collector.IsAvailable)
         {
-            return ctx.VStack(b =>
+            (string text, Terminal.Gui.Drawing.Attribute attr)[] lines =
             [
-                b.Text(""),
-                b.Text("  Per-process network monitoring requires administrator privileges.", Theme.Warning),
-                b.Text(""),
-                b.Text("  Re-launch Bandit from an elevated terminal:", Theme.StatusFg),
-                b.Text(""),
-                b.Text("    Run as Administrator → bandit.exe", Theme.Dim),
-            ]).Fill();
+                ("", Theme.StatusAttr),
+                ("  Per-process network monitoring requires administrator privileges.", Theme.WarningAttr),
+                ("", Theme.StatusAttr),
+                ("  Re-launch Bandit from an elevated terminal:", Theme.StatusAttr),
+                ("", Theme.StatusAttr),
+                ("    Run as Administrator → bandit.exe", Theme.DimAttr),
+            ];
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                container.Add(new ColoredLabel(lines[i].text, lines[i].attr)
+                {
+                    X = 0,
+                    Y = i,
+                    Width = Dim.Fill(),
+                });
+            }
+            return container;
         }
 
-        return ctx.VStack(b =>
-        [
-            b.Text(""),
-            b.Text("  Per-process data collection coming soon.", Theme.StatusFg),
-        ]).Fill();
+        container.Add(new ColoredLabel("  Per-process data collection coming soon.", Theme.StatusAttr)
+        {
+            X = 0,
+            Y = 1,
+            Width = Dim.Fill(),
+        });
+        return container;
     }
 }
