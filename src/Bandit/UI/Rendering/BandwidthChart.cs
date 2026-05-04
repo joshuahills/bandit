@@ -1,10 +1,9 @@
-using System.Text;
+namespace Bandit.UI.Rendering;
+
 using Bandit.Data.Models;
-using Terminal.Gui.Drawing;
+using System.Text;
 using Terminal.Gui.ViewBase;
 using Attribute = Terminal.Gui.Drawing.Attribute;
-
-namespace Bandit.UI.Rendering;
 
 public sealed class BandwidthChart : View
 {
@@ -42,13 +41,13 @@ public sealed class BandwidthChart : View
         foreach (var sample in Samples)
         {
             if (sample.BytesOut > maxValue) maxValue = sample.BytesOut;
-            if (sample.BytesIn  > maxValue) maxValue = sample.BytesIn;
+            if (sample.BytesIn > maxValue) maxValue = sample.BytesIn;
         }
         maxValue *= 1.15;
 
         DrawGrid(chartWidth, plotHeight);
         DrawYAxis(plotHeight, maxValue);
-        DrawLineChart(chartWidth, plotHeight, maxValue, s => s.BytesIn,  Theme.DownloadAttr);
+        DrawLineChart(chartWidth, plotHeight, maxValue, s => s.BytesIn, Theme.DownloadAttr);
         DrawLineChart(chartWidth, plotHeight, maxValue, s => s.BytesOut, Theme.UploadAttr);
         DrawXAxis(chartWidth, height);
         return true;
@@ -186,8 +185,8 @@ public sealed class BandwidthChart : View
     public static string FormatBytesPerSec(double bytes)
     {
         if (bytes >= 1_000_000_000) return $"{bytes / 1_000_000_000:F1}G";
-        if (bytes >= 1_000_000)     return $"{bytes / 1_000_000:F1}M";
-        if (bytes >= 1_000)         return $"{bytes / 1_000:F1}K";
+        if (bytes >= 1_000_000) return $"{bytes / 1_000_000:F1}M";
+        if (bytes >= 1_000) return $"{bytes / 1_000:F1}K";
         return $"{bytes:F0}B";
     }
 

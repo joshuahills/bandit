@@ -1,8 +1,8 @@
+namespace Bandit.Platform.Windows;
+
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using static Bandit.Platform.Windows.EtwInterop;
-
-namespace Bandit.Platform.Windows;
 
 internal sealed unsafe class EtwSession : IDisposable
 {

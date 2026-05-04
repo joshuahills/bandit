@@ -1,6 +1,6 @@
-using System.Diagnostics;
-
 namespace Bandit.Platform.Windows;
+
+using System.Diagnostics;
 
 internal sealed class ProcessNameCache
 {

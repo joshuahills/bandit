@@ -1,7 +1,7 @@
+namespace Bandit.Tests;
+
 using Bandit.Data;
 using Xunit;
-
-namespace Bandit.Tests;
 
 public class CircularBufferTests
 {

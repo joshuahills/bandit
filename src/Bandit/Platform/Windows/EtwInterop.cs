@@ -1,20 +1,20 @@
-using System.Runtime.InteropServices;
-
 namespace Bandit.Platform.Windows;
+
+using System.Runtime.InteropServices;
 
 internal static partial class EtwInterop
 {
-    public const uint WNODE_FLAG_TRACED_GUID         = 0x00020000;
-    public const uint EVENT_TRACE_REAL_TIME_MODE     = 0x00000100;
-    public const uint PROCESS_TRACE_MODE_REAL_TIME   = 0x00000100;
+    public const uint WNODE_FLAG_TRACED_GUID = 0x00020000;
+    public const uint EVENT_TRACE_REAL_TIME_MODE = 0x00000100;
+    public const uint PROCESS_TRACE_MODE_REAL_TIME = 0x00000100;
     public const uint PROCESS_TRACE_MODE_EVENT_RECORD = 0x10000000;
-    public const uint EVENT_TRACE_CONTROL_STOP       = 1;
+    public const uint EVENT_TRACE_CONTROL_STOP = 1;
 
-    public const ulong INVALID_PROCESS_TRACE_HANDLE  = 0xFFFFFFFFFFFFFFFFul;
+    public const ulong INVALID_PROCESS_TRACE_HANDLE = 0xFFFFFFFFFFFFFFFFul;
 
-    public const uint ERROR_SUCCESS                  = 0;
-    public const uint ERROR_ALREADY_EXISTS           = 183;
-    public const uint ERROR_WMI_INSTANCE_NOT_FOUND   = 4201;
+    public const uint ERROR_SUCCESS = 0;
+    public const uint ERROR_ALREADY_EXISTS = 183;
+    public const uint ERROR_WMI_INSTANCE_NOT_FOUND = 4201;
 
     [LibraryImport("advapi32.dll", EntryPoint = "StartTraceW", StringMarshalling = StringMarshalling.Utf16, SetLastError = false)]
     public static partial uint StartTrace(out ulong sessionHandle, string sessionName, IntPtr properties);
