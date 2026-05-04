@@ -41,4 +41,24 @@
     <TrimmerRootAssembly Include="Terminal.Gui" />
   </ItemGroup>
 
+  <!-- Bake the build version into a const string so runtime '-v' lookups
+       don't need reflection (which is brittle under AOT trimming). -->
+  <Target Name="GenerateBuildInfo" BeforeTargets="BeforeCompile;CoreCompile">
+    <PropertyGroup>
+      <BuildInfoFilePath>$(IntermediateOutputPath)BuildInfo.g.cs</BuildInfoFilePath>
+    </PropertyGroup>
+    <ItemGroup>
+      <_BuildInfoLines Include="namespace Bandit%3B" />
+      <_BuildInfoLines Include="internal static class BuildInfo" />
+      <_BuildInfoLines Include="{" />
+      <_BuildInfoLines Include="    public const string Version = %22$(Version)%22%3B" />
+      <_BuildInfoLines Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(BuildInfoFilePath)" Lines="@(_BuildInfoLines)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(BuildInfoFilePath)" KeepDuplicates="false" />
+      <FileWrites Include="$(BuildInfoFilePath)" />
+    </ItemGroup>
+  </Target>
+
 </Project>
