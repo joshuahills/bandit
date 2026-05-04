@@ -18,7 +18,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Prefer RELEASE_TOKEN (a fine-grained PAT authenticating as the
+          # admin) so the Scoop manifest push later in this workflow can
+          # bypass branch protection. Falls back to GITHUB_TOKEN on forks
+          # / first runs before the secret is configured.
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -102,7 +106,7 @@ jobs:
         shell: pwsh
         run: |
           if (-not $env:RELEASE_TOKEN) {
-            Write-Host '::warning::RELEASE_TOKEN not set; skipping Scoop manifest bump. Add a fine-grained PAT with Contents: read+write for this repo, scoped to your admin user, so the push bypasses branch protection.'
+            Write-Host '::warning::RELEASE_TOKEN not set; skipping Scoop manifest bump. Add a fine-grained PAT with Contents: read+write for this repo so the push bypasses branch protection.'
             exit 0
           }
 
@@ -114,11 +118,11 @@ jobs:
           $json = $manifest | ConvertTo-Json -Depth 10
           Set-Content -Path $manifestPath -Value $json -NoNewline
 
-          # Authenticate as the admin user via PAT so the push bypasses
-          # 'PRs required' branch protection (enforce_admins is false).
+          # Auth was configured by checkout@v4 using RELEASE_TOKEN, so
+          # 'git push' here authenticates as the admin user and bypasses
+          # the ruleset's PR/status-check requirement.
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git remote set-url origin "https://x-access-token:$env:RELEASE_TOKEN@github.com/${{ github.repository }}.git"
 
           git add $manifestPath
           if (git diff --cached --quiet) {
