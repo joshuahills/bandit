@@ -140,8 +140,18 @@ public sealed class App(AppState state) : IDisposable
         int x = prefix.Length;
         for (int i = 0; i < AppState.TimescaleLabels.Length; i++)
         {
+            if (i > 0)
+            {
+                const string separator = "  ·  ";
+                bar.Add(new ColoredLabel(separator, Theme.DimAttr)
+                {
+                    X = x, Y = 0, Width = separator.Length,
+                });
+                x += separator.Length;
+            }
+
             bool active = i == state.TimescaleIndex;
-            string segment = active ? $"[{AppState.TimescaleLabels[i]}]" : $" {AppState.TimescaleLabels[i]} ";
+            string segment = active ? $"[{AppState.TimescaleLabels[i]}]" : AppState.TimescaleLabels[i];
             int captured = i;
             var seg = new ColoredLabel(segment, active ? Theme.ActiveTabAttr : Theme.InactiveTabAttr)
             {
