@@ -97,8 +97,15 @@ jobs:
           }
 
       - name: Update Scoop manifest
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         shell: pwsh
         run: |
+          if (-not $env:RELEASE_TOKEN) {
+            Write-Host '::warning::RELEASE_TOKEN not set; skipping Scoop manifest bump. Add a fine-grained PAT with Contents: read+write for this repo, scoped to your admin user, so the push bypasses branch protection.'
+            exit 0
+          }
+
           $manifestPath = 'bucket/bandit.json'
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
           $manifest.version = '${{ env.VERSION }}'
@@ -107,8 +114,12 @@ jobs:
           $json = $manifest | ConvertTo-Json -Depth 10
           Set-Content -Path $manifestPath -Value $json -NoNewline
 
+          # Authenticate as the admin user via PAT so the push bypasses
+          # 'PRs required' branch protection (enforce_admins is false).
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git remote set-url origin "https://x-access-token:$env:RELEASE_TOKEN@github.com/${{ github.repository }}.git"
+
           git add $manifestPath
           if (git diff --cached --quiet) {
             Write-Host 'No Scoop manifest changes to commit.'
