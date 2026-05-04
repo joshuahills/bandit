@@ -3,6 +3,7 @@ using Bandit.UI;
 using Bandit.UI.Rendering;
 using Bandit.UI.Screens;
 using Terminal.Gui.App;
+using Terminal.Gui.Configuration;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Drivers;
 using Terminal.Gui.Input;
@@ -51,8 +52,12 @@ public sealed class App(AppState state) : IDisposable
         }
     }
 
+    private const string BanditScheme = "Bandit";
+
     private void BuildUi()
     {
+        SchemeManager.AddScheme(BanditScheme, new Scheme(new Terminal.Gui.Drawing.Attribute(Theme.StatusFg, Theme.Background)));
+
         _window = new Window
         {
             X = 0,
@@ -61,6 +66,7 @@ public sealed class App(AppState state) : IDisposable
             Height = Dim.Fill(),
             Title = string.Empty,
             BorderStyle = LineStyle.None,
+            SchemeName = BanditScheme,
         };
 
         _header = BuildHeader();
