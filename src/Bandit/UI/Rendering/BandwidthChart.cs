@@ -2,6 +2,7 @@ using System.Text;
 using Bandit.Data.Models;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.ViewBase;
+using Attribute = Terminal.Gui.Drawing.Attribute;
 
 namespace Bandit.UI.Rendering;
 
@@ -35,22 +36,31 @@ public sealed class BandwidthChart : View
 
         double maxValue = 1000;
         foreach (var sample in Samples)
-            if (sample.TotalBytes > maxValue) maxValue = sample.TotalBytes;
+        {
+            if (sample.BytesOut > maxValue) maxValue = sample.BytesOut;
+            if (sample.BytesIn  > maxValue) maxValue = sample.BytesIn;
+        }
         maxValue *= 1.15;
 
         DrawGrid(chartWidth, height);
         DrawYAxis(height, maxValue);
-        DrawBrailleArea(chartWidth, height, maxValue);
-        DrawTopRightLabel(width);
+        DrawLineChart(chartWidth, height, maxValue, s => s.BytesIn,  Theme.DownloadAttr);
+        DrawLineChart(chartWidth, height, maxValue, s => s.BytesOut, Theme.UploadAttr);
         return true;
     }
 
-    private void DrawBrailleArea(int chartWidth, int chartHeight, double maxValue)
+    private void DrawLineChart(
+        int chartWidth,
+        int chartHeight,
+        double maxValue,
+        Func<NetworkSample, long> selector,
+        Attribute attribute)
     {
         var canvas = new BrailleCanvas(chartWidth, chartHeight);
         int dotW = canvas.DotWidth;
         int dotH = canvas.DotHeight;
 
+        int prevDotY = -1;
         for (int dotX = 0; dotX < dotW; dotX++)
         {
             double sampleF = dotW <= 1
@@ -59,34 +69,45 @@ public sealed class BandwidthChart : View
             int idx0 = (int)Math.Floor(sampleF);
             int idx1 = Math.Min(idx0 + 1, Samples.Length - 1);
             double t = sampleF - idx0;
-            double value = Samples[idx0].TotalBytes * (1 - t) + Samples[idx1].TotalBytes * t;
+            double value = selector(Samples[idx0]) * (1 - t) + selector(Samples[idx1]) * t;
 
             double frac = value / maxValue;
             if (frac < 0) frac = 0;
             if (frac > 1) frac = 1;
-            int dotFromBottom = (int)Math.Round(frac * dotH);
-            int dotYTop = dotH - dotFromBottom;
-            if (dotYTop < 0) dotYTop = 0;
-            if (dotYTop >= dotH) continue;
+            int dotFromBottom = (int)Math.Round(frac * (dotH - 1));
+            int dotY = dotH - 1 - dotFromBottom;
+            if (dotY < 0) dotY = 0;
+            if (dotY >= dotH) dotY = dotH - 1;
 
-            canvas.FillBelow(dotX, dotYTop);
+            if (prevDotY < 0)
+            {
+                canvas.SetDot(dotX, dotY);
+            }
+            else
+            {
+                int yMin = Math.Min(prevDotY, dotY);
+                int yMax = Math.Max(prevDotY, dotY);
+                for (int y = yMin; y <= yMax; y++)
+                    canvas.SetDot(dotX, y);
+            }
+            prevDotY = dotY;
         }
 
-        SetAttribute(Theme.UploadAttr);
+        SetAttribute(attribute);
         for (int cy = 0; cy < chartHeight; cy++)
             for (int cx = 0; cx < chartWidth; cx++)
             {
                 char? cell = canvas.GetCell(cx, cy);
                 if (cell is null) continue;
                 Move(AxisWidth + cx, cy);
-                AddRune(new System.Text.Rune(cell.Value));
+                AddRune(new Rune(cell.Value));
             }
     }
 
     private void DrawGrid(int chartWidth, int chartHeight)
     {
         SetAttribute(Theme.GridAttr);
-        var dot = new System.Text.Rune('·');
+        var dot = new Rune('·');
         for (int row = 1; row < GridRows; row++)
         {
             int y = chartHeight - 1 - (row * (chartHeight - 1) / GridRows);
@@ -108,15 +129,6 @@ public sealed class BandwidthChart : View
             string label = FormatBytesPerSec(value).PadLeft(AxisWidth - 1) + " ";
             DrawString(0, y, label);
         }
-    }
-
-    private void DrawTopRightLabel(int width)
-    {
-        var latest = Samples[^1];
-        string label = $" ↑{FormatBytesPerSec(latest.BytesOut)}/s ↓{FormatBytesPerSec(latest.BytesIn)}/s ";
-        int labelX = Math.Max(AxisWidth, width - label.Length);
-        SetAttribute(Theme.StatusAttr);
-        DrawString(labelX, 0, label);
     }
 
     private void DrawString(int x, int y, string text)

@@ -19,6 +19,7 @@ public static class Theme
     public static readonly Color Background  = new(12,  12,  22);
 
     public static readonly Attribute UploadAttr   = new(Upload, Background);
+    public static readonly Attribute DownloadAttr = new(Download, Background);
     public static readonly Attribute AccentAttr   = new(Accent, Background);
     public static readonly Attribute AxisAttr     = new(Axis, Background);
     public static readonly Attribute GridAttr     = new(Grid, Background);
