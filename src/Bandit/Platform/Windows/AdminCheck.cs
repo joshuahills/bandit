@@ -1,6 +1,6 @@
-using System.Security.Principal;
-
 namespace Bandit.Platform.Windows;
+
+using System.Security.Principal;
 
 internal static class AdminCheck
 {

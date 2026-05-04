@@ -1,17 +1,16 @@
-using System.Diagnostics.CodeAnalysis;
+namespace Bandit;
+
 using Bandit.Data.Collectors;
 using Bandit.UI;
 using Bandit.UI.Rendering;
 using Bandit.UI.Screens;
+using System.Diagnostics.CodeAnalysis;
 using Terminal.Gui.App;
 using Terminal.Gui.Configuration;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Drivers;
-using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
-
-namespace Bandit;
 
 public sealed class App(AppState state) : IDisposable
 {
@@ -110,7 +109,9 @@ public sealed class App(AppState state) : IDisposable
         const string brandText = " ◈ BANDIT  ";
         header.Add(new ColoredLabel(brandText, Theme.AccentAttr)
         {
-            X = 0, Y = 0, Width = brandText.Length,
+            X = 0,
+            Y = 0,
+            Width = brandText.Length,
         });
 
         int x = brandText.Length;
@@ -121,7 +122,9 @@ public sealed class App(AppState state) : IDisposable
             var attr = screen.Index == state.ActiveScreenIndex ? Theme.ActiveTabAttr : Theme.InactiveTabAttr;
             var tab = new ColoredLabel(label, attr)
             {
-                X = x, Y = 0, Width = label.Length,
+                X = x,
+                Y = 0,
+                Width = label.Length,
             };
             tab.MouseEvent += (_, m) =>
             {
@@ -152,7 +155,9 @@ public sealed class App(AppState state) : IDisposable
         const string prefix = " timescale ";
         bar.Add(new ColoredLabel(prefix, Theme.StatusAttr)
         {
-            X = 0, Y = 0, Width = prefix.Length,
+            X = 0,
+            Y = 0,
+            Width = prefix.Length,
         });
 
         int x = prefix.Length;
@@ -163,7 +168,9 @@ public sealed class App(AppState state) : IDisposable
             int captured = i;
             var seg = new ColoredLabel(segment, active ? Theme.ActiveTabAttr : Theme.InactiveTabAttr)
             {
-                X = x, Y = 0, Width = segment.Length,
+                X = x,
+                Y = 0,
+                Width = segment.Length,
             };
             seg.MouseEvent += (_, m) =>
             {
@@ -171,6 +178,7 @@ public sealed class App(AppState state) : IDisposable
                 {
                     state.TimescaleIndex = captured;
                     RefreshStatusBar();
+                    _screens[state.ActiveScreenIndex].Refresh();
                     m.Handled = true;
                 }
             };
@@ -183,7 +191,9 @@ public sealed class App(AppState state) : IDisposable
             : "   [ / ] cycle   q:quit   [!] Not elevated ";
         bar.Add(new ColoredLabel(hint, Theme.DimAttr)
         {
-            X = x, Y = 0, Width = hint.Length,
+            X = x,
+            Y = 0,
+            Width = hint.Length,
         });
 
         var latest = _system.Samples.Latest();
@@ -196,11 +206,15 @@ public sealed class App(AppState state) : IDisposable
         int ratesLength = up.Length + down.Length;
         bar.Add(new ColoredLabel(up, Theme.UploadAttr)
         {
-            X = Pos.AnchorEnd(ratesLength), Y = 0, Width = up.Length,
+            X = Pos.AnchorEnd(ratesLength),
+            Y = 0,
+            Width = up.Length,
         });
         bar.Add(new ColoredLabel(down, Theme.DownloadAttr)
         {
-            X = Pos.AnchorEnd(down.Length), Y = 0, Width = down.Length,
+            X = Pos.AnchorEnd(down.Length),
+            Y = 0,
+            Width = down.Length,
         });
 
         return bar;
@@ -275,12 +289,14 @@ public sealed class App(AppState state) : IDisposable
             {
                 state.CycleTimescaleDown();
                 RefreshStatusBar();
+                _screens[state.ActiveScreenIndex].Refresh();
                 key.Handled = true;
             }
             else if (rune == ']')
             {
                 state.CycleTimescaleUp();
                 RefreshStatusBar();
+                _screens[state.ActiveScreenIndex].Refresh();
                 key.Handled = true;
             }
         };

@@ -1,7 +1,7 @@
-using System.Net.NetworkInformation;
-using Bandit.Data.Models;
-
 namespace Bandit.Data.Collectors;
+
+using Bandit.Data.Models;
+using System.Net.NetworkInformation;
 
 public sealed class SystemNetworkCollector : INetworkCollector
 {

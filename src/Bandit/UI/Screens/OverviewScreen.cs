@@ -1,8 +1,8 @@
+namespace Bandit.UI.Screens;
+
 using Bandit.Data.Collectors;
 using Bandit.UI.Rendering;
 using Terminal.Gui.ViewBase;
-
-namespace Bandit.UI.Screens;
 
 public sealed class OverviewScreen(AppState state, SystemNetworkCollector collector) : IScreen
 {
