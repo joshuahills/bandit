@@ -2,6 +2,7 @@ using System.Text;
 using Bandit.Data;
 using Bandit.Data.Collectors;
 using Bandit.Data.Models;
+using Bandit.Platform.Net;
 using Bandit.Platform.Windows;
 using Bandit.UI.Rendering;
 using Terminal.Gui.Drawing;
@@ -21,6 +22,7 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
     private ProcessTable? _table;
     private ProcessDetail? _detail;
     private int? _detailPid;
+    private readonly HostnameResolver _hostnameResolver = new();
 
     public View Build()
     {
@@ -114,7 +116,7 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
         _container.RemoveAll();
         _table = null;
 
-        _detail = new ProcessDetail(pid)
+        _detail = new ProcessDetail(pid, _hostnameResolver)
         {
             X = 0, Y = 0,
             Width = Dim.Fill(),
@@ -180,6 +182,14 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
         }
 
         var connections = ConnectionTable.SnapshotForPid(pid);
+
+        // Kick off reverse-DNS lookups for any new remote IPs we don't have a
+        // cached hostname for yet. The resolver is async + non-blocking; the
+        // UI shows the IP until the next refresh picks up the resolved name.
+        foreach (var conn in connections)
+        {
+            if (conn.Remote is not null) _hostnameResolver.Lookup(conn.Remote);
+        }
 
         _detail.UpdateData(
             name ?? $"pid:{pid}",
@@ -526,10 +536,12 @@ internal sealed class ProcessDetail : View
     private IReadOnlyList<ProcessConnection> _connections = Array.Empty<ProcessConnection>();
     private int _scrollOffset;
     private readonly BandwidthChart _chart;
+    private readonly HostnameResolver _hostnames;
 
-    public ProcessDetail(int pid)
+    public ProcessDetail(int pid, HostnameResolver hostnames)
     {
         Pid = pid;
+        _hostnames = hostnames;
         CanFocus = true;
         _chart = new BandwidthChart
         {
@@ -662,7 +674,14 @@ internal sealed class ProcessDetail : View
 
             string proto = $"{(c.Protocol == Protocol.Tcp ? "TCP" : "UDP")}{(c.Family == Bandit.Data.Models.AddressFamily.IPv6 ? "6" : "4")}";
             string local = FormatEndpoint(c.Local, c.LocalPort);
-            string remote = c.Remote is null ? "" : FormatEndpoint(c.Remote, c.RemotePort);
+            // Prefer the resolved hostname over the bare IP. Falls back to IP
+            // until the async resolver populates the cache.
+            string? hostname = c.Remote is null ? null : _hostnames.TryGet(c.Remote);
+            string remote = c.Remote is null
+                ? ""
+                : hostname is null
+                    ? FormatEndpoint(c.Remote, c.RemotePort)
+                    : $"{hostname}:{c.RemotePort}";
             string state = c.State == TcpState.None ? "" : FormatState(c.State);
 
             SetAttribute(Theme.StatusAttr);
