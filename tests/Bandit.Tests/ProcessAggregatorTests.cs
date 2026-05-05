@@ -83,6 +83,71 @@ public class ProcessAggregatorTests
         Assert.Equal(0, chrome.LiveBytesOut);
     }
 
+    [Fact]
+    public void Aggregate_records_per_PID_history_per_second()
+    {
+        ProcessNetworkInfo[][] window =
+        [
+            [new ProcessNetworkInfo(1, "chrome", 100, 200)],
+            [new ProcessNetworkInfo(1, "chrome", 50,  150)],
+            [new ProcessNetworkInfo(1, "chrome", 25,  75)],
+        ];
+
+        var row = Assert.Single(ProcessAggregator.Aggregate(window));
+
+        Assert.Equal(new long[] { 100, 50, 25 }, row.HistoryIn);
+        Assert.Equal(new long[] { 200, 150, 75 }, row.HistoryOut);
+    }
+
+    [Fact]
+    public void Aggregate_zeroes_history_buckets_where_pid_absent()
+    {
+        ProcessNetworkInfo[][] window =
+        [
+            [new ProcessNetworkInfo(1, "chrome", 100, 200)],
+            [new ProcessNetworkInfo(2, "firefox", 50, 60)],          // no chrome
+            [new ProcessNetworkInfo(1, "chrome", 25, 75)],
+        ];
+
+        var chrome = Assert.Single(ProcessAggregator.Aggregate(window), r => r.Pid == 1);
+
+        Assert.Equal(new long[] { 100, 0, 25 }, chrome.HistoryIn);
+        Assert.Equal(new long[] { 200, 0, 75 }, chrome.HistoryOut);
+    }
+
+    [Fact]
+    public void Aggregate_caps_history_length_for_long_windows()
+    {
+        // 1000 snapshots for one PID — well past the cap.
+        var window = new ProcessNetworkInfo[1000][];
+        for (int i = 0; i < window.Length; i++)
+            window[i] = [new ProcessNetworkInfo(1, "chrome", 1, 2)];
+
+        var row = Assert.Single(ProcessAggregator.Aggregate(window));
+
+        Assert.True(row.HistoryIn.Length <= ProcessAggregator.HistoryCap,
+            $"HistoryIn length {row.HistoryIn.Length} exceeds cap {ProcessAggregator.HistoryCap}");
+        Assert.Equal(row.HistoryIn.Length, row.HistoryOut.Length);
+    }
+
+    [Fact]
+    public void Aggregate_buckets_accumulate_when_downsampling()
+    {
+        // 128 snapshots × 1 byte = 128 bytes total. Cap is 64 → stride = 2.
+        // Each history bucket should hold the sum of 2 snapshots = 2 bytes,
+        // and the sum of buckets must equal the scalar total.
+        var window = new ProcessNetworkInfo[128][];
+        for (int i = 0; i < window.Length; i++)
+            window[i] = [new ProcessNetworkInfo(1, "chrome", 1, 0)];
+
+        var row = Assert.Single(ProcessAggregator.Aggregate(window));
+
+        Assert.Equal(64, row.HistoryIn.Length);
+        Assert.All(row.HistoryIn, v => Assert.Equal(2, v));
+        Assert.Equal(128, row.HistoryIn.Sum());
+        Assert.Equal(128, row.TotalBytesIn);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

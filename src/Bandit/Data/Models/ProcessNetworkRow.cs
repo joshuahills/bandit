@@ -6,4 +6,6 @@ public sealed record ProcessNetworkRow(
     long LiveBytesIn,
     long LiveBytesOut,
     long TotalBytesIn,
-    long TotalBytesOut);
+    long TotalBytesOut,
+    long[] HistoryIn,
+    long[] HistoryOut);

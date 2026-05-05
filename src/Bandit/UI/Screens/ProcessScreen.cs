@@ -187,10 +187,11 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
 
 internal sealed class ProcessTable : View
 {
-    private const int PidWidth  = 6;
-    private const int LiveWidth = 10;
-    private const int TotalWidth = 10;
-    private const int NameMin   = 16;
+    private const int PidWidth       = 6;
+    private const int LiveWidth      = 10;
+    private const int TotalWidth     = 10;
+    private const int SparklineWidth = 16;
+    private const int NameMin        = 12;
 
     public ProcessNetworkRow[] Rows { get; set; } = [];
     public string WindowLabel { get; set; } = "";
@@ -216,8 +217,8 @@ internal sealed class ProcessTable : View
         int height = Viewport.Height;
         if (width <= 0 || height <= 0) return true;
 
-        int rateBlock = LiveWidth * 2 + TotalWidth * 2 + 4;
-        int nameWidth = Math.Max(NameMin, width - PidWidth - rateBlock - 2);
+        int fixedBlock = SparklineWidth + LiveWidth * 2 + TotalWidth * 2 + 5;
+        int nameWidth = Math.Max(NameMin, width - PidWidth - fixedBlock - 2);
 
         DrawHeader(nameWidth);
 
@@ -312,14 +313,17 @@ internal sealed class ProcessTable : View
     private ProcessSortKey? ColumnAt(int x)
     {
         int width = Viewport.Width;
-        int rateBlock = LiveWidth * 2 + TotalWidth * 2 + 4;
-        int nameWidth = Math.Max(NameMin, width - PidWidth - rateBlock - 2);
+        int fixedBlock = SparklineWidth + LiveWidth * 2 + TotalWidth * 2 + 5;
+        int nameWidth = Math.Max(NameMin, width - PidWidth - fixedBlock - 2);
 
         int start = 1;
         if (x >= start && x < start + PidWidth + 1) return ProcessSortKey.Pid;
         start += PidWidth + 1;
         if (x >= start && x < start + nameWidth) return ProcessSortKey.Name;
         start += nameWidth + 1;
+        // Sparkline column — visual only, no sort key.
+        if (x >= start && x < start + SparklineWidth) return null;
+        start += SparklineWidth + 1;
         if (x >= start && x < start + LiveWidth) return ProcessSortKey.LiveUp;
         start += LiveWidth + 1;
         if (x >= start && x < start + LiveWidth) return ProcessSortKey.LiveDown;
@@ -351,6 +355,11 @@ internal sealed class ProcessTable : View
 
         DrawHeaderCell(x, "PROCESS", nameWidth, leftAlign: true, ProcessSortKey.Name);
         x += nameWidth + 1;
+
+        // Sparkline column header — non-sortable, plain status colour.
+        SetAttribute(Theme.StatusAttr);
+        DrawString(x, 0, "TRAFFIC".PadRight(SparklineWidth));
+        x += SparklineWidth + 1;
 
         DrawHeaderCell(x, "↑/s", LiveWidth, leftAlign: false, ProcessSortKey.LiveUp);
         x += LiveWidth + 1;
@@ -410,6 +419,9 @@ internal sealed class ProcessTable : View
         DrawString(x, y, name);
         x += nameWidth + 1;
 
+        DrawSparkline(x, y, row, selected);
+        x += SparklineWidth + 1;
+
         SetAttribute(upAttr);
         DrawString(x, y, liveUp);
         x += LiveWidth + 1;
@@ -424,6 +436,59 @@ internal sealed class ProcessTable : View
 
         SetAttribute(downAttr);
         DrawString(x, y, totalDown);
+    }
+
+    private void DrawSparkline(int x, int y, ProcessNetworkRow row, bool selected)
+    {
+        var historyIn = row.HistoryIn;
+        var historyOut = row.HistoryOut;
+        if (historyIn.Length == 0) return;
+
+        var canvas = new BrailleCanvas(SparklineWidth, 1);
+        int dotW = canvas.DotWidth;
+        int dotH = canvas.DotHeight;
+
+        // Scale to the per-row peak so each row's sparkline shows its own
+        // shape — we don't want one bursty process to flatten everyone else
+        // visually.
+        long max = 1;
+        for (int i = 0; i < historyIn.Length; i++)
+        {
+            long total = historyIn[i] + historyOut[i];
+            if (total > max) max = total;
+        }
+
+        for (int dotX = 0; dotX < dotW; dotX++)
+        {
+            double frac = dotW <= 1 ? 0 : (double)dotX / (dotW - 1);
+            double sampleF = frac * (historyIn.Length - 1);
+            int idx0 = (int)Math.Floor(sampleF);
+            int idx1 = Math.Min(idx0 + 1, historyIn.Length - 1);
+            double t = sampleF - idx0;
+            double total = (historyIn[idx0] + historyOut[idx0]) * (1 - t)
+                         + (historyIn[idx1] + historyOut[idx1]) * t;
+
+            double valueFrac = total / max;
+            if (valueFrac < 0) valueFrac = 0;
+            if (valueFrac > 1) valueFrac = 1;
+            int dotFromBottom = (int)Math.Round(valueFrac * dotH);
+            int dotYTop = dotH - dotFromBottom;
+            if (dotYTop < 0) dotYTop = 0;
+            if (dotYTop >= dotH) continue;
+
+            canvas.FillBelow(dotX, dotYTop);
+        }
+
+        SetAttribute(selected ? Theme.SelectedUploadAttr : Theme.UploadAttr);
+        for (int cx = 0; cx < SparklineWidth; cx++)
+        {
+            char? cell = canvas.GetCell(cx, 0);
+            if (cell is not null)
+            {
+                Move(x + cx, y);
+                AddRune(new System.Text.Rune(cell.Value));
+            }
+        }
     }
 
     private static string Truncate(string value, int width)
