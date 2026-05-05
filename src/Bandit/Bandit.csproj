@@ -7,7 +7,6 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <OptimizeSpeed>true</OptimizeSpeed>
     <RootNamespace>Bandit</RootNamespace>
 
     <!-- AOT trim feature switches: drop subsystems we don't use so the trimmer
