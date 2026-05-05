@@ -7,7 +7,7 @@ namespace Bandit.Tests;
 public class ProcessSorterTests
 {
     private static ProcessNetworkRow Row(int pid, string name, long liveIn, long liveOut, long totalIn, long totalOut)
-        => new(pid, name, liveIn, liveOut, totalIn, totalOut);
+        => new(pid, name, liveIn, liveOut, totalIn, totalOut, [], []);
 
     [Fact]
     public void Sort_by_TotalCombined_descending_ranks_biggest_first()
