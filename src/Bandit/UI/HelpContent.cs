@@ -43,6 +43,7 @@ public static class HelpContent
             new("  Enter · 2-click",    "Open process detail",       false),
             new("  Esc · Backspace",    "Back to table",             false),
             new("  Click header",       "Sort by column",            false),
+            new("  n",                  "Toggle hostname / IP (detail)", false),
             new("", "", false),
 
             new("COMMANDS", "", IsHeader: true),

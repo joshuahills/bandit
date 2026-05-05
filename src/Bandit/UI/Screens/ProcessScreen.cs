@@ -2,6 +2,8 @@ using System.Text;
 using Bandit.Data;
 using Bandit.Data.Collectors;
 using Bandit.Data.Models;
+using Bandit.Platform.Net;
+using Bandit.Platform.Windows;
 using Bandit.UI.Rendering;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Drivers;
@@ -20,6 +22,7 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
     private ProcessTable? _table;
     private ProcessDetail? _detail;
     private int? _detailPid;
+    private readonly HostnameResolver _hostnameResolver = new();
 
     public View Build()
     {
@@ -113,7 +116,7 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
         _container.RemoveAll();
         _table = null;
 
-        _detail = new ProcessDetail(pid)
+        _detail = new ProcessDetail(pid, _hostnameResolver)
         {
             X = 0, Y = 0,
             Width = Dim.Fill(),
@@ -178,7 +181,21 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
             history[i] = new NetworkSample(0, bIn, bOut, 0, 0);
         }
 
-        _detail.UpdateData(name ?? $"pid:{pid}", liveIn, liveOut, totalIn, totalOut, history, state.TimescaleSeconds, state.TimescaleLabel);
+        var connections = ConnectionTable.SnapshotForPid(pid);
+
+        // Kick off reverse-DNS lookups for any new remote IPs we don't have a
+        // cached hostname for yet. The resolver is async + non-blocking; the
+        // UI shows the IP until the next refresh picks up the resolved name.
+        foreach (var conn in connections)
+        {
+            if (conn.Remote is not null) _hostnameResolver.Lookup(conn.Remote);
+        }
+
+        _detail.UpdateData(
+            name ?? $"pid:{pid}",
+            liveIn, liveOut, totalIn, totalOut,
+            history, state.TimescaleSeconds, state.TimescaleLabel,
+            connections);
     }
 
     private ProcessNetworkRow[] BuildRows(int seconds) =>
@@ -507,23 +524,32 @@ internal sealed class ProcessTable : View
 
 internal sealed class ProcessDetail : View
 {
+    private const int ConnectionsBlock = 12;  // header + 1 spacer + ~10 rows
+    private const int ConnectionVisibleRows = ConnectionsBlock - 2;
+
     public int Pid { get; }
     public event EventHandler? Back;
 
     private string _name = "";
     private long _liveIn, _liveOut, _totalIn, _totalOut;
     private string _windowLabel = "";
+    private IReadOnlyList<ProcessConnection> _connections = Array.Empty<ProcessConnection>();
+    private int _scrollOffset;
+    private bool _showHostnames = true;
     private readonly BandwidthChart _chart;
+    private readonly HostnameResolver _hostnames;
 
-    public ProcessDetail(int pid)
+    public ProcessDetail(int pid, HostnameResolver hostnames)
     {
         Pid = pid;
+        _hostnames = hostnames;
         CanFocus = true;
         _chart = new BandwidthChart
         {
             X = 0, Y = 6,
             Width = Dim.Fill(),
-            Height = Dim.Fill(),
+            // Leave room for the connections block at the bottom.
+            Height = Dim.Fill(ConnectionsBlock),
         };
         Add(_chart);
         KeyDown += OnDetailKey;
@@ -535,7 +561,8 @@ internal sealed class ProcessDetail : View
         long totalIn, long totalOut,
         NetworkSample[] history,
         int timescaleSeconds,
-        string windowLabel)
+        string windowLabel,
+        IReadOnlyList<ProcessConnection> connections)
     {
         _name = name;
         _liveIn = liveIn;
@@ -543,6 +570,12 @@ internal sealed class ProcessDetail : View
         _totalIn = totalIn;
         _totalOut = totalOut;
         _windowLabel = windowLabel;
+        _connections = connections;
+
+        // Re-clamp scroll position in case the new snapshot has fewer rows.
+        int max = Math.Max(0, _connections.Count - ConnectionVisibleRows);
+        if (_scrollOffset > max) _scrollOffset = max;
+
         _chart.Samples = history;
         _chart.TimescaleSeconds = timescaleSeconds;
         _chart.SetNeedsDraw();
@@ -555,6 +588,41 @@ internal sealed class ProcessDetail : View
         {
             Back?.Invoke(this, EventArgs.Empty);
             key.Handled = true;
+            return;
+        }
+
+        // 'n' (names) toggles between showing the resolved hostname and the
+        // raw IP for the remote endpoint.
+        if (key.AsRune.Value == 'n' || key.AsRune.Value == 'N')
+        {
+            _showHostnames = !_showHostnames;
+            SetNeedsDraw();
+            key.Handled = true;
+            return;
+        }
+
+        int max = Math.Max(0, _connections.Count - ConnectionVisibleRows);
+        int? newOffset = key.KeyCode switch
+        {
+            KeyCode.CursorUp   => Math.Max(0,   _scrollOffset - 1),
+            KeyCode.CursorDown => Math.Min(max, _scrollOffset + 1),
+            KeyCode.PageUp     => Math.Max(0,   _scrollOffset - ConnectionVisibleRows),
+            KeyCode.PageDown   => Math.Min(max, _scrollOffset + ConnectionVisibleRows),
+            KeyCode.Home       => 0,
+            KeyCode.End        => max,
+            _                  => null,
+        };
+
+        if (newOffset is { } offset && offset != _scrollOffset)
+        {
+            _scrollOffset = offset;
+            SetNeedsDraw();
+            key.Handled = true;
+        }
+        else if (newOffset is not null)
+        {
+            // Already at limit — still consume the key so it doesn't bubble.
+            key.Handled = true;
         }
     }
 
@@ -565,14 +633,144 @@ internal sealed class ProcessDetail : View
         SetAttribute(Theme.StatusAttr);
         DrawString(2 + 5 + _name.Length + 2, 0, $"PID {Pid}");
         SetAttribute(Theme.DimAttr);
-        DrawString(2, 1, " [Esc] back ");
+        DrawString(2, 1, $" [Esc] back   [n] {(_showHostnames ? "showing names" : "showing IPs")} ");
 
         SetAttribute(Theme.UploadAttr);
         DrawString(2, 3, $" ↑ live: {BandwidthChart.FormatBytesPerSec(_liveOut)}/s   ↑ over {_windowLabel}: {BandwidthChart.FormatBytesPerSec(_totalOut)}");
         SetAttribute(Theme.DownloadAttr);
         DrawString(2, 4, $" ↓ live: {BandwidthChart.FormatBytesPerSec(_liveIn)}/s   ↓ over {_windowLabel}: {BandwidthChart.FormatBytesPerSec(_totalIn)}");
 
+        DrawConnections();
+
         return base.OnDrawingContent(context);
+    }
+
+    private void DrawConnections()
+    {
+        int viewportH = Viewport.Height;
+        int viewportW = Viewport.Width;
+        if (viewportH <= ConnectionsBlock) return;
+
+        int startY = viewportH - ConnectionsBlock + 1;
+
+        // Header row.
+        SetAttribute(Theme.AccentAttr);
+        DrawString(2, startY, $" CONNECTIONS ({_connections.Count}) ");
+
+        if (_connections.Count == 0)
+        {
+            SetAttribute(Theme.DimAttr);
+            DrawString(2, startY + 2, " (none) ");
+            return;
+        }
+
+        // Order: TCP first (sorted by state then port), then UDP.
+        var ordered = _connections
+            .OrderBy(c => c.Protocol)
+            .ThenBy(c => c.State == TcpState.Established ? 0 : 1)
+            .ThenBy(c => c.LocalPort)
+            .ToArray();
+
+        // Re-clamp here too — Sort might surface this without a refresh having
+        // run, and we want to never index past the end.
+        int maxOffset = Math.Max(0, ordered.Length - ConnectionVisibleRows);
+        if (_scrollOffset > maxOffset) _scrollOffset = maxOffset;
+
+        int shown = Math.Min(ConnectionVisibleRows, ordered.Length - _scrollOffset);
+
+        // Dynamic column widths so long hostnames don't truncate on wide
+        // terminals. Layout: "  proto  local → remote   state".
+        const int LeftMargin     = 2;
+        const int ProtoWidth     = 5;
+        const int Gap            = 2;
+        const int ArrowWidth     = 3;       // " → "
+        const int StateWidth     = 12;
+        const int LocalMaxWidth  = 30;
+
+        int protoX  = LeftMargin;
+        int localX  = protoX + ProtoWidth + Gap;
+        int remoteX = localX + LocalMaxWidth + ArrowWidth;
+        int stateX  = Math.Max(remoteX + 12, viewportW - StateWidth - 1);
+        int remoteWidth = Math.Max(12, stateX - remoteX - Gap);
+
+        for (int i = 0; i < shown; i++)
+        {
+            var c = ordered[_scrollOffset + i];
+            int y = startY + 1 + i;
+
+            string proto = $"{(c.Protocol == Protocol.Tcp ? "TCP" : "UDP")}{(c.Family == Bandit.Data.Models.AddressFamily.IPv6 ? "6" : "4")}";
+            string local = FormatEndpoint(c.Local, c.LocalPort);
+            string? hostname = (c.Remote is null || !_showHostnames) ? null : _hostnames.TryGet(c.Remote);
+            string remote = c.Remote is null
+                ? ""
+                : hostname is null
+                    ? FormatEndpoint(c.Remote, c.RemotePort)
+                    : $"{hostname}:{c.RemotePort}";
+            string state = c.State == TcpState.None ? "" : FormatState(c.State);
+
+            SetAttribute(Theme.StatusAttr);
+            DrawString(protoX, y, $"  {proto,-5}");
+
+            SetAttribute(Theme.AccentAttr);
+            DrawString(localX, y, Truncate(local, LocalMaxWidth));
+
+            SetAttribute(Theme.DimAttr);
+            DrawString(localX + LocalMaxWidth, y, " → ");
+
+            SetAttribute(Theme.AccentAttr);
+            DrawString(remoteX, y, Truncate(remote, remoteWidth));
+
+            SetAttribute(c.State == TcpState.Established ? Theme.UploadAttr : Theme.DimAttr);
+            DrawString(stateX, y, state);
+        }
+
+        // Scroll indicators replace the old 'and N more' line.
+        SetAttribute(Theme.DimAttr);
+        int hidden_above = _scrollOffset;
+        int hidden_below = ordered.Length - (_scrollOffset + shown);
+
+        if (hidden_above > 0 || hidden_below > 0)
+        {
+            string headerSuffix;
+            if (hidden_above > 0 && hidden_below > 0)
+                headerSuffix = $"   ↑ {hidden_above} above · ↓ {hidden_below} below ";
+            else if (hidden_above > 0)
+                headerSuffix = $"   ↑ {hidden_above} above ";
+            else
+                headerSuffix = $"   ↓ {hidden_below} below ";
+
+            int suffixX = 2 + $" CONNECTIONS ({_connections.Count}) ".Length;
+            DrawString(suffixX, startY, headerSuffix);
+        }
+    }
+
+    private static string FormatEndpoint(System.Net.IPAddress addr, int port)
+    {
+        bool isV6 = addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6;
+        return isV6 ? $"[{addr}]:{port}" : $"{addr}:{port}";
+    }
+
+    private static string FormatState(TcpState state) => state switch
+    {
+        TcpState.Established => "ESTABLISHED",
+        TcpState.Listening   => "LISTENING",
+        TcpState.SynSent     => "SYN_SENT",
+        TcpState.SynReceived => "SYN_RCVD",
+        TcpState.FinWait1    => "FIN_WAIT1",
+        TcpState.FinWait2    => "FIN_WAIT2",
+        TcpState.CloseWait   => "CLOSE_WAIT",
+        TcpState.Closing     => "CLOSING",
+        TcpState.LastAck     => "LAST_ACK",
+        TcpState.TimeWait    => "TIME_WAIT",
+        TcpState.Closed      => "CLOSED",
+        TcpState.DeleteTcb   => "DELETE_TCB",
+        _                    => "",
+    };
+
+    private static string Truncate(string value, int width)
+    {
+        if (value.Length <= width) return value;
+        return value[..(width - 1)] + "…";
     }
 
     private void DrawString(int x, int y, string text)
