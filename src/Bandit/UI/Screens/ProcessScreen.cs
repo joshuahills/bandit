@@ -23,6 +23,7 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
     private ProcessDetail? _detail;
     private int? _detailPid;
     private readonly HostnameResolver _hostnameResolver = new();
+    private readonly GeoIpResolver _geoIpResolver = new();
 
     public View Build()
     {
@@ -116,7 +117,7 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
         _container.RemoveAll();
         _table = null;
 
-        _detail = new ProcessDetail(pid, _hostnameResolver)
+        _detail = new ProcessDetail(pid, _hostnameResolver, _geoIpResolver)
         {
             X = 0, Y = 0,
             Width = Dim.Fill(),
@@ -538,11 +539,13 @@ internal sealed class ProcessDetail : View
     private bool _showHostnames = true;
     private readonly BandwidthChart _chart;
     private readonly HostnameResolver _hostnames;
+    private readonly GeoIpResolver _geoIp;
 
-    public ProcessDetail(int pid, HostnameResolver hostnames)
+    public ProcessDetail(int pid, HostnameResolver hostnames, GeoIpResolver geoIp)
     {
         Pid = pid;
         _hostnames = hostnames;
+        _geoIp = geoIp;
         CanFocus = true;
         _chart = new BandwidthChart
         {
@@ -679,18 +682,20 @@ internal sealed class ProcessDetail : View
         int shown = Math.Min(ConnectionVisibleRows, ordered.Length - _scrollOffset);
 
         // Dynamic column widths so long hostnames don't truncate on wide
-        // terminals. Layout: "  proto  local → remote   state".
+        // terminals. Layout: "  proto  local → CC remote   state".
         const int LeftMargin     = 2;
         const int ProtoWidth     = 5;
         const int Gap            = 2;
         const int ArrowWidth     = 3;       // " → "
+        const int CountryWidth   = 3;       // "US " — 2 ISO chars + trailing space
         const int StateWidth     = 12;
         const int LocalMaxWidth  = 30;
 
-        int protoX  = LeftMargin;
-        int localX  = protoX + ProtoWidth + Gap;
-        int remoteX = localX + LocalMaxWidth + ArrowWidth;
-        int stateX  = Math.Max(remoteX + 12, viewportW - StateWidth - 1);
+        int protoX   = LeftMargin;
+        int localX   = protoX + ProtoWidth + Gap;
+        int countryX = localX + LocalMaxWidth + ArrowWidth;
+        int remoteX  = countryX + CountryWidth;
+        int stateX   = Math.Max(remoteX + 12, viewportW - StateWidth - 1);
         int remoteWidth = Math.Max(12, stateX - remoteX - Gap);
 
         for (int i = 0; i < shown; i++)
@@ -706,6 +711,10 @@ internal sealed class ProcessDetail : View
                 : hostname is null
                     ? FormatEndpoint(c.Remote, c.RemotePort)
                     : $"{hostname}:{c.RemotePort}";
+            // Flag glyph (regional-indicator pair) is 2 columns wide in
+            // emoji-aware terminals, falls back to the 2 ISO letters otherwise.
+            string countryCode = c.Remote is null ? "" : (_geoIp.CountryCode(c.Remote) ?? "");
+            string country = countryCode.Length == 2 ? (GeoIpResolver.CountryFlag(countryCode) ?? countryCode) : "";
             string state = c.State == TcpState.None ? "" : FormatState(c.State);
 
             SetAttribute(Theme.StatusAttr);
@@ -716,6 +725,9 @@ internal sealed class ProcessDetail : View
 
             SetAttribute(Theme.DimAttr);
             DrawString(localX + LocalMaxWidth, y, " → ");
+
+            SetAttribute(Theme.StatusAttr);
+            DrawString(countryX, y, country.Length == 0 ? "   " : country);
 
             SetAttribute(Theme.AccentAttr);
             DrawString(remoteX, y, Truncate(remote, remoteWidth));
