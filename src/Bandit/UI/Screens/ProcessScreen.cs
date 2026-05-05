@@ -2,6 +2,7 @@ using System.Text;
 using Bandit.Data;
 using Bandit.Data.Collectors;
 using Bandit.Data.Models;
+using Bandit.Platform.Windows;
 using Bandit.UI.Rendering;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Drivers;
@@ -178,7 +179,13 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
             history[i] = new NetworkSample(0, bIn, bOut, 0, 0);
         }
 
-        _detail.UpdateData(name ?? $"pid:{pid}", liveIn, liveOut, totalIn, totalOut, history, state.TimescaleSeconds, state.TimescaleLabel);
+        var connections = ConnectionTable.SnapshotForPid(pid);
+
+        _detail.UpdateData(
+            name ?? $"pid:{pid}",
+            liveIn, liveOut, totalIn, totalOut,
+            history, state.TimescaleSeconds, state.TimescaleLabel,
+            connections);
     }
 
     private ProcessNetworkRow[] BuildRows(int seconds) =>
@@ -507,12 +514,15 @@ internal sealed class ProcessTable : View
 
 internal sealed class ProcessDetail : View
 {
+    private const int ConnectionsBlock = 12;  // header + 1 spacer + ~10 rows
+
     public int Pid { get; }
     public event EventHandler? Back;
 
     private string _name = "";
     private long _liveIn, _liveOut, _totalIn, _totalOut;
     private string _windowLabel = "";
+    private IReadOnlyList<ProcessConnection> _connections = Array.Empty<ProcessConnection>();
     private readonly BandwidthChart _chart;
 
     public ProcessDetail(int pid)
@@ -523,7 +533,8 @@ internal sealed class ProcessDetail : View
         {
             X = 0, Y = 6,
             Width = Dim.Fill(),
-            Height = Dim.Fill(),
+            // Leave room for the connections block at the bottom.
+            Height = Dim.Fill(ConnectionsBlock),
         };
         Add(_chart);
         KeyDown += OnDetailKey;
@@ -535,7 +546,8 @@ internal sealed class ProcessDetail : View
         long totalIn, long totalOut,
         NetworkSample[] history,
         int timescaleSeconds,
-        string windowLabel)
+        string windowLabel,
+        IReadOnlyList<ProcessConnection> connections)
     {
         _name = name;
         _liveIn = liveIn;
@@ -543,6 +555,7 @@ internal sealed class ProcessDetail : View
         _totalIn = totalIn;
         _totalOut = totalOut;
         _windowLabel = windowLabel;
+        _connections = connections;
         _chart.Samples = history;
         _chart.TimescaleSeconds = timescaleSeconds;
         _chart.SetNeedsDraw();
@@ -572,7 +585,103 @@ internal sealed class ProcessDetail : View
         SetAttribute(Theme.DownloadAttr);
         DrawString(2, 4, $" ↓ live: {BandwidthChart.FormatBytesPerSec(_liveIn)}/s   ↓ over {_windowLabel}: {BandwidthChart.FormatBytesPerSec(_totalIn)}");
 
+        DrawConnections();
+
         return base.OnDrawingContent(context);
+    }
+
+    private void DrawConnections()
+    {
+        int viewportH = Viewport.Height;
+        int viewportW = Viewport.Width;
+        if (viewportH <= ConnectionsBlock) return;
+
+        int startY = viewportH - ConnectionsBlock + 1;
+
+        // Header row.
+        SetAttribute(Theme.AccentAttr);
+        DrawString(2, startY, $" CONNECTIONS ({_connections.Count}) ");
+
+        if (_connections.Count == 0)
+        {
+            SetAttribute(Theme.DimAttr);
+            DrawString(2, startY + 2, " (none) ");
+            return;
+        }
+
+        // Order: TCP first (sorted by state then port), then UDP.
+        var ordered = _connections
+            .OrderBy(c => c.Protocol)
+            .ThenBy(c => c.State == TcpState.Established ? 0 : 1)
+            .ThenBy(c => c.LocalPort)
+            .ToArray();
+
+        int maxRows = ConnectionsBlock - 2;
+        int shown = Math.Min(ordered.Length, maxRows);
+
+        for (int i = 0; i < shown; i++)
+        {
+            var c = ordered[i];
+            int y = startY + 1 + i;
+
+            string proto = $"{(c.Protocol == Protocol.Tcp ? "TCP" : "UDP")}{(c.Family == Bandit.Data.Models.AddressFamily.IPv6 ? "6" : "4")}";
+            string local = FormatEndpoint(c.Local, c.LocalPort);
+            string remote = c.Remote is null ? "" : FormatEndpoint(c.Remote, c.RemotePort);
+            string state = c.State == TcpState.None ? "" : FormatState(c.State);
+
+            SetAttribute(Theme.StatusAttr);
+            DrawString(2, y, $"  {proto,-5}");
+
+            SetAttribute(Theme.AccentAttr);
+            DrawString(9, y, Truncate(local, 30));
+
+            SetAttribute(Theme.DimAttr);
+            DrawString(40, y, " → ");
+
+            SetAttribute(Theme.AccentAttr);
+            DrawString(43, y, Truncate(remote, 30));
+
+            SetAttribute(c.State == TcpState.Established ? Theme.UploadAttr : Theme.DimAttr);
+            DrawString(74, y, state);
+
+            // Truncate the row to viewport width to avoid overflow.
+            _ = viewportW;
+        }
+
+        if (ordered.Length > shown)
+        {
+            SetAttribute(Theme.DimAttr);
+            DrawString(2, startY + 1 + shown, $"  …and {ordered.Length - shown} more ");
+        }
+    }
+
+    private static string FormatEndpoint(System.Net.IPAddress addr, int port)
+    {
+        bool isV6 = addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6;
+        return isV6 ? $"[{addr}]:{port}" : $"{addr}:{port}";
+    }
+
+    private static string FormatState(TcpState state) => state switch
+    {
+        TcpState.Established => "ESTABLISHED",
+        TcpState.Listening   => "LISTENING",
+        TcpState.SynSent     => "SYN_SENT",
+        TcpState.SynReceived => "SYN_RCVD",
+        TcpState.FinWait1    => "FIN_WAIT1",
+        TcpState.FinWait2    => "FIN_WAIT2",
+        TcpState.CloseWait   => "CLOSE_WAIT",
+        TcpState.Closing     => "CLOSING",
+        TcpState.LastAck     => "LAST_ACK",
+        TcpState.TimeWait    => "TIME_WAIT",
+        TcpState.Closed      => "CLOSED",
+        TcpState.DeleteTcb   => "DELETE_TCB",
+        _                    => "",
+    };
+
+    private static string Truncate(string value, int width)
+    {
+        if (value.Length <= width) return value;
+        return value[..(width - 1)] + "…";
     }
 
     private void DrawString(int x, int y, string text)
