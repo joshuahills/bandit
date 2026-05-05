@@ -38,10 +38,10 @@ internal static class ConnectionTable
     /// </summary>
     public static IReadOnlyList<ProcessConnection> SnapshotForPid(int pid)
     {
-        long now = Environment.TickCount64;
         lock (CacheGate)
         {
-            if (_cachedPid == pid && _cachedSnapshot is not null && now - _cachedAtTicks < CacheTtlMs)
+            if (_cachedPid == pid && _cachedSnapshot is not null
+                && Environment.TickCount64 - _cachedAtTicks < CacheTtlMs)
                 return _cachedSnapshot;
         }
 
@@ -51,10 +51,13 @@ internal static class ConnectionTable
         AppendUdp(result, AF_INET, pid);
         AppendUdp(result, AF_INET6, pid);
 
+        // Stamp the cache *after* the walk so a slow snapshot doesn't eat
+        // into its own TTL window — otherwise an immediate follow-up could
+        // miss a result that was effectively just produced.
         lock (CacheGate)
         {
             _cachedPid = pid;
-            _cachedAtTicks = now;
+            _cachedAtTicks = Environment.TickCount64;
             _cachedSnapshot = result;
         }
         return result;

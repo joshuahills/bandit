@@ -542,7 +542,7 @@ internal sealed class ProcessDetail : View
             // the chart so it doesn't collapse to a blank gap.
             Height = Dim.Func(parent =>
             {
-                int h = parent.Viewport.Height;
+                int h = parent?.Viewport.Height ?? 0;
                 return h >= ChartY + 1 + ConnectionsBlock
                     ? h - ChartY - ConnectionsBlock
                     : Math.Max(1, h - ChartY);
@@ -649,18 +649,8 @@ internal sealed class ProcessDetail : View
 
         int startY = viewportH - ConnectionsBlock + 1;
 
-        // Header row.
-        SetAttribute(Theme.AccentAttr);
-        DrawString(2, startY, $" CONNECTIONS ({_connections.Count}) ");
-
-        if (_connections.Count == 0)
-        {
-            SetAttribute(Theme.DimAttr);
-            DrawString(2, startY + 2, " (none) ");
-            return;
-        }
-
-        // Order: TCP first (sorted by state then port), then UDP.
+        // Order: TCP first (sorted by state then port), then UDP. Done up
+        // front so the header can include the scroll indicator.
         var ordered = _connections
             .OrderBy(c => c.Protocol)
             .ThenBy(c => c.State == TcpState.Established ? 0 : 1)
@@ -673,6 +663,30 @@ internal sealed class ProcessDetail : View
         if (_scrollOffset > maxOffset) _scrollOffset = maxOffset;
 
         int shown = Math.Min(ConnectionVisibleRows, ordered.Length - _scrollOffset);
+
+        int hiddenAbove = _scrollOffset;
+        int hiddenBelow = ordered.Length - (_scrollOffset + shown);
+        string scrollSuffix =
+            (hiddenAbove > 0 && hiddenBelow > 0) ? $"   ↑ {hiddenAbove} above · ↓ {hiddenBelow} below " :
+            (hiddenAbove > 0)                    ? $"   ↑ {hiddenAbove} above " :
+            (hiddenBelow > 0)                    ? $"   ↓ {hiddenBelow} below " :
+            "";
+
+        // Single padded header draw — when the count shrinks (100 → 99) or
+        // the scroll indicator disappears, the trailing characters from the
+        // previous frame would otherwise leak through.
+        string header = $" CONNECTIONS ({_connections.Count}) {scrollSuffix}";
+        int headerWidth = Math.Max(0, viewportW - 2);
+        SetAttribute(Theme.AccentAttr);
+        DrawString(2, startY, header.PadRight(headerWidth));
+
+        if (_connections.Count == 0)
+        {
+            SetAttribute(Theme.DimAttr);
+            DrawString(2, startY + 2, " (none) ".PadRight(headerWidth));
+            BlankRows(startY + 1, startY + ConnectionsBlock - 1, viewportW, skipY: startY + 2);
+            return;
+        }
 
         for (int i = 0; i < shown; i++)
         {
@@ -720,23 +734,23 @@ internal sealed class ProcessDetail : View
             DrawString(74, y, state.PadRight(stateCol));
         }
 
-        // Scroll indicators replace the old 'and N more' line.
-        SetAttribute(Theme.DimAttr);
-        int hidden_above = _scrollOffset;
-        int hidden_below = ordered.Length - (_scrollOffset + shown);
+        // When the connection count shrinks between frames the rows below
+        // the new tail still hold stale text. Blank them so the list
+        // doesn't "remember" disappeared sockets.
+        int firstBlankY = startY + 1 + shown;
+        int lastRowY = startY + ConnectionVisibleRows;
+        BlankRows(firstBlankY, lastRowY, viewportW);
+    }
 
-        if (hidden_above > 0 || hidden_below > 0)
+    private void BlankRows(int fromY, int toY, int viewportW, int skipY = int.MinValue)
+    {
+        if (fromY > toY) return;
+        SetAttribute(Theme.StatusAttr);
+        string blank = new(' ', Math.Max(0, viewportW));
+        for (int y = fromY; y <= toY; y++)
         {
-            string headerSuffix;
-            if (hidden_above > 0 && hidden_below > 0)
-                headerSuffix = $"   ↑ {hidden_above} above · ↓ {hidden_below} below ";
-            else if (hidden_above > 0)
-                headerSuffix = $"   ↑ {hidden_above} above ";
-            else
-                headerSuffix = $"   ↓ {hidden_below} below ";
-
-            int suffixX = 2 + $" CONNECTIONS ({_connections.Count}) ".Length;
-            DrawString(suffixX, startY, headerSuffix);
+            if (y == skipY) continue;
+            DrawString(0, y, blank);
         }
     }
 
