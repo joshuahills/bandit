@@ -60,4 +60,23 @@ public sealed class GeoIpResolver
         _cache[ip] = code;
         return code;
     }
+
+    /// <summary>
+    /// Converts an ISO 3166-1 alpha-2 country code into its flag emoji by
+    /// pairing the two Regional Indicator Symbols (U+1F1E6..U+1F1FF). Any
+    /// code that isn't exactly two A–Z letters returns null — the UI then
+    /// falls back to rendering the raw code or nothing.
+    /// </summary>
+    public static string? CountryFlag(string? isoCode)
+    {
+        if (isoCode is null || isoCode.Length != 2) return null;
+        char a = char.ToUpperInvariant(isoCode[0]);
+        char b = char.ToUpperInvariant(isoCode[1]);
+        if (a is < 'A' or > 'Z' || b is < 'A' or > 'Z') return null;
+
+        const int RegionalIndicatorBase = 0x1F1E6;
+        return string.Concat(
+            char.ConvertFromUtf32(RegionalIndicatorBase + (a - 'A')),
+            char.ConvertFromUtf32(RegionalIndicatorBase + (b - 'A')));
+    }
 }

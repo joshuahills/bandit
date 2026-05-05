@@ -711,7 +711,10 @@ internal sealed class ProcessDetail : View
                 : hostname is null
                     ? FormatEndpoint(c.Remote, c.RemotePort)
                     : $"{hostname}:{c.RemotePort}";
-            string country = c.Remote is null ? "" : (_geoIp.CountryCode(c.Remote) ?? "");
+            // Flag glyph (regional-indicator pair) is 2 columns wide in
+            // emoji-aware terminals, falls back to the 2 ISO letters otherwise.
+            string countryCode = c.Remote is null ? "" : (_geoIp.CountryCode(c.Remote) ?? "");
+            string country = countryCode.Length == 2 ? (GeoIpResolver.CountryFlag(countryCode) ?? countryCode) : "";
             string state = c.State == TcpState.None ? "" : FormatState(c.State);
 
             SetAttribute(Theme.StatusAttr);
@@ -724,7 +727,7 @@ internal sealed class ProcessDetail : View
             DrawString(localX + LocalMaxWidth, y, " → ");
 
             SetAttribute(Theme.StatusAttr);
-            DrawString(countryX, y, country.Length == 0 ? "   " : $"{country,-3}");
+            DrawString(countryX, y, country.Length == 0 ? "   " : country);
 
             SetAttribute(Theme.AccentAttr);
             DrawString(remoteX, y, Truncate(remote, remoteWidth));

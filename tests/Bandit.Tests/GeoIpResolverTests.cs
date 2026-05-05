@@ -73,6 +73,27 @@ public class GeoIpResolverTests
         Assert.Equal("US", first);
     }
 
+    [Theory]
+    [InlineData("US", "\U0001F1FA\U0001F1F8")]
+    [InlineData("GB", "\U0001F1EC\U0001F1E7")]
+    [InlineData("us", "\U0001F1FA\U0001F1F8")]   // accepts lowercase
+    public void CountryFlag_pairs_regional_indicators(string code, string expected)
+    {
+        Assert.Equal(expected, GeoIpResolver.CountryFlag(code));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("U")]      // too short
+    [InlineData("USA")]    // too long
+    [InlineData("U1")]     // non-letter
+    [InlineData("--")]
+    public void CountryFlag_rejects_malformed_input(string? code)
+    {
+        Assert.Null(GeoIpResolver.CountryFlag(code));
+    }
+
     [Fact]
     public void Missing_database_returns_null_without_throwing()
     {
