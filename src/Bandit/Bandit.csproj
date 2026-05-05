@@ -43,6 +43,27 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- MaxMind GeoLite2-Country: ships next to the exe so GeoIpResolver
+         can mmap it on first lookup. Includes the LICENSE/COPYRIGHT files
+         per MaxMind's redistribution terms. -->
+    <Content Include="Assets\GeoLite2\GeoLite2-Country.mmdb">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Pack>true</Pack>
+      <PackagePath>tools/net10.0/any/Assets/GeoLite2/</PackagePath>
+    </Content>
+    <Content Include="Assets\GeoLite2\LICENSE.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Pack>true</Pack>
+      <PackagePath>tools/net10.0/any/Assets/GeoLite2/</PackagePath>
+    </Content>
+    <Content Include="Assets\GeoLite2\COPYRIGHT.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Pack>true</Pack>
+      <PackagePath>tools/net10.0/any/Assets/GeoLite2/</PackagePath>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Terminal.Gui" Version="2.0.1" />
   </ItemGroup>
 

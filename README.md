@@ -60,4 +60,6 @@ System-wide bandwidth charts work without admin. Per-process tracking (Processes
 
 ## License
 
-MIT.
+MIT for Bandit's source. Bandit also bundles the MaxMind GeoLite2-Country database for the connection-list country column.
+
+This product includes GeoLite2 data created by MaxMind, available from <https://www.maxmind.com>. Use of the bundled `.mmdb` file is governed by the [GeoLite2 EULA](https://www.maxmind.com/en/geolite2/eula). The database incorporates GeoNames data ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)).
