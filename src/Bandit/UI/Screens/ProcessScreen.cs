@@ -535,6 +535,7 @@ internal sealed class ProcessDetail : View
     private string _windowLabel = "";
     private IReadOnlyList<ProcessConnection> _connections = Array.Empty<ProcessConnection>();
     private int _scrollOffset;
+    private bool _showHostnames = true;
     private readonly BandwidthChart _chart;
     private readonly HostnameResolver _hostnames;
 
@@ -590,6 +591,16 @@ internal sealed class ProcessDetail : View
             return;
         }
 
+        // 'n' (names) toggles between showing the resolved hostname and the
+        // raw IP for the remote endpoint.
+        if (key.AsRune.Value == 'n' || key.AsRune.Value == 'N')
+        {
+            _showHostnames = !_showHostnames;
+            SetNeedsDraw();
+            key.Handled = true;
+            return;
+        }
+
         int max = Math.Max(0, _connections.Count - ConnectionVisibleRows);
         int? newOffset = key.KeyCode switch
         {
@@ -622,7 +633,7 @@ internal sealed class ProcessDetail : View
         SetAttribute(Theme.StatusAttr);
         DrawString(2 + 5 + _name.Length + 2, 0, $"PID {Pid}");
         SetAttribute(Theme.DimAttr);
-        DrawString(2, 1, " [Esc] back ");
+        DrawString(2, 1, $" [Esc] back   [n] {(_showHostnames ? "showing names" : "showing IPs")} ");
 
         SetAttribute(Theme.UploadAttr);
         DrawString(2, 3, $" ↑ live: {BandwidthChart.FormatBytesPerSec(_liveOut)}/s   ↑ over {_windowLabel}: {BandwidthChart.FormatBytesPerSec(_totalOut)}");
@@ -667,6 +678,21 @@ internal sealed class ProcessDetail : View
 
         int shown = Math.Min(ConnectionVisibleRows, ordered.Length - _scrollOffset);
 
+        // Dynamic column widths so long hostnames don't truncate on wide
+        // terminals. Layout: "  proto  local → remote   state".
+        const int LeftMargin     = 2;
+        const int ProtoWidth     = 5;
+        const int Gap            = 2;
+        const int ArrowWidth     = 3;       // " → "
+        const int StateWidth     = 12;
+        const int LocalMaxWidth  = 30;
+
+        int protoX  = LeftMargin;
+        int localX  = protoX + ProtoWidth + Gap;
+        int remoteX = localX + LocalMaxWidth + ArrowWidth;
+        int stateX  = Math.Max(remoteX + 12, viewportW - StateWidth - 1);
+        int remoteWidth = Math.Max(12, stateX - remoteX - Gap);
+
         for (int i = 0; i < shown; i++)
         {
             var c = ordered[_scrollOffset + i];
@@ -674,9 +700,7 @@ internal sealed class ProcessDetail : View
 
             string proto = $"{(c.Protocol == Protocol.Tcp ? "TCP" : "UDP")}{(c.Family == Bandit.Data.Models.AddressFamily.IPv6 ? "6" : "4")}";
             string local = FormatEndpoint(c.Local, c.LocalPort);
-            // Prefer the resolved hostname over the bare IP. Falls back to IP
-            // until the async resolver populates the cache.
-            string? hostname = c.Remote is null ? null : _hostnames.TryGet(c.Remote);
+            string? hostname = (c.Remote is null || !_showHostnames) ? null : _hostnames.TryGet(c.Remote);
             string remote = c.Remote is null
                 ? ""
                 : hostname is null
@@ -685,22 +709,19 @@ internal sealed class ProcessDetail : View
             string state = c.State == TcpState.None ? "" : FormatState(c.State);
 
             SetAttribute(Theme.StatusAttr);
-            DrawString(2, y, $"  {proto,-5}");
+            DrawString(protoX, y, $"  {proto,-5}");
 
             SetAttribute(Theme.AccentAttr);
-            DrawString(9, y, Truncate(local, 30));
+            DrawString(localX, y, Truncate(local, LocalMaxWidth));
 
             SetAttribute(Theme.DimAttr);
-            DrawString(40, y, " → ");
+            DrawString(localX + LocalMaxWidth, y, " → ");
 
             SetAttribute(Theme.AccentAttr);
-            DrawString(43, y, Truncate(remote, 30));
+            DrawString(remoteX, y, Truncate(remote, remoteWidth));
 
             SetAttribute(c.State == TcpState.Established ? Theme.UploadAttr : Theme.DimAttr);
-            DrawString(74, y, state);
-
-            // Truncate the row to viewport width to avoid overflow.
-            _ = viewportW;
+            DrawString(stateX, y, state);
         }
 
         // Scroll indicators replace the old 'and N more' line.
