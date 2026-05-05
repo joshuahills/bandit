@@ -2,6 +2,7 @@ using System.Text;
 using Bandit.Data;
 using Bandit.Data.Collectors;
 using Bandit.Data.Models;
+using Bandit.Platform.Windows;
 using Bandit.UI.Rendering;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Drivers;
@@ -178,7 +179,13 @@ public sealed class ProcessScreen(AppState state, ProcessNetworkCollector collec
             history[i] = new NetworkSample(0, bIn, bOut, 0, 0);
         }
 
-        _detail.UpdateData(name ?? $"pid:{pid}", liveIn, liveOut, totalIn, totalOut, history, state.TimescaleSeconds, state.TimescaleLabel);
+        var connections = ConnectionTable.SnapshotForPid(pid);
+
+        _detail.UpdateData(
+            name ?? $"pid:{pid}",
+            liveIn, liveOut, totalIn, totalOut,
+            history, state.TimescaleSeconds, state.TimescaleLabel,
+            connections);
     }
 
     private ProcessNetworkRow[] BuildRows(int seconds) =>
@@ -507,12 +514,17 @@ internal sealed class ProcessTable : View
 
 internal sealed class ProcessDetail : View
 {
+    private const int ConnectionsBlock = 12;  // header + 1 spacer + ~10 rows
+    private const int ConnectionVisibleRows = ConnectionsBlock - 2;
+
     public int Pid { get; }
     public event EventHandler? Back;
 
     private string _name = "";
     private long _liveIn, _liveOut, _totalIn, _totalOut;
     private string _windowLabel = "";
+    private IReadOnlyList<ProcessConnection> _connections = Array.Empty<ProcessConnection>();
+    private int _scrollOffset;
     private readonly BandwidthChart _chart;
 
     public ProcessDetail(int pid)
@@ -523,11 +535,24 @@ internal sealed class ProcessDetail : View
         {
             X = 0, Y = 6,
             Width = Dim.Fill(),
-            Height = Dim.Fill(),
+            // Reserve the connections block at the bottom only when the
+            // viewport is tall enough to actually render it. On short
+            // terminals the connections block self-hides (see
+            // DrawConnections), and we hand that 12-row margin back to
+            // the chart so it doesn't collapse to a blank gap.
+            Height = Dim.Func(parent =>
+            {
+                int h = parent?.Viewport.Height ?? 0;
+                return h >= ChartY + 1 + ConnectionsBlock
+                    ? h - ChartY - ConnectionsBlock
+                    : Math.Max(1, h - ChartY);
+            }, this),
         };
         Add(_chart);
         KeyDown += OnDetailKey;
     }
+
+    private const int ChartY = 6;
 
     public void UpdateData(
         string name,
@@ -535,7 +560,8 @@ internal sealed class ProcessDetail : View
         long totalIn, long totalOut,
         NetworkSample[] history,
         int timescaleSeconds,
-        string windowLabel)
+        string windowLabel,
+        IReadOnlyList<ProcessConnection> connections)
     {
         _name = name;
         _liveIn = liveIn;
@@ -543,6 +569,12 @@ internal sealed class ProcessDetail : View
         _totalIn = totalIn;
         _totalOut = totalOut;
         _windowLabel = windowLabel;
+        _connections = connections;
+
+        // Re-clamp scroll position in case the new snapshot has fewer rows.
+        int max = Math.Max(0, _connections.Count - ConnectionVisibleRows);
+        if (_scrollOffset > max) _scrollOffset = max;
+
         _chart.Samples = history;
         _chart.TimescaleSeconds = timescaleSeconds;
         _chart.SetNeedsDraw();
@@ -554,6 +586,31 @@ internal sealed class ProcessDetail : View
         if (key.KeyCode == KeyCode.Esc || key.KeyCode == KeyCode.Backspace)
         {
             Back?.Invoke(this, EventArgs.Empty);
+            key.Handled = true;
+            return;
+        }
+
+        int max = Math.Max(0, _connections.Count - ConnectionVisibleRows);
+        int? newOffset = key.KeyCode switch
+        {
+            KeyCode.CursorUp   => Math.Max(0,   _scrollOffset - 1),
+            KeyCode.CursorDown => Math.Min(max, _scrollOffset + 1),
+            KeyCode.PageUp     => Math.Max(0,   _scrollOffset - ConnectionVisibleRows),
+            KeyCode.PageDown   => Math.Min(max, _scrollOffset + ConnectionVisibleRows),
+            KeyCode.Home       => 0,
+            KeyCode.End        => max,
+            _                  => null,
+        };
+
+        if (newOffset is { } offset && offset != _scrollOffset)
+        {
+            _scrollOffset = offset;
+            SetNeedsDraw();
+            key.Handled = true;
+        }
+        else if (newOffset is not null)
+        {
+            // Already at limit — still consume the key so it doesn't bubble.
             key.Handled = true;
         }
     }
@@ -572,7 +629,158 @@ internal sealed class ProcessDetail : View
         SetAttribute(Theme.DownloadAttr);
         DrawString(2, 4, $" ↓ live: {BandwidthChart.FormatBytesPerSec(_liveIn)}/s   ↓ over {_windowLabel}: {BandwidthChart.FormatBytesPerSec(_totalIn)}");
 
+        DrawConnections();
+
         return base.OnDrawingContent(context);
+    }
+
+    private void DrawConnections()
+    {
+        int viewportH = Viewport.Height;
+        int viewportW = Viewport.Width;
+
+        // Header takes rows 0–4, the bandwidth chart starts at Y=6 and reserves
+        // ConnectionsBlock rows at the bottom for us. If the terminal is too
+        // short, the connections block would crash up into the header/chart
+        // area. Hide it entirely below this threshold rather than overdraw.
+        const int HeaderRows = 6;       // 5 header lines + 1 gap before chart
+        const int MinChartRows = 1;
+        if (viewportH < HeaderRows + MinChartRows + ConnectionsBlock) return;
+
+        int startY = viewportH - ConnectionsBlock + 1;
+
+        // Order: TCP first (sorted by state then port), then UDP. Done up
+        // front so the header can include the scroll indicator.
+        var ordered = _connections
+            .OrderBy(c => c.Protocol)
+            .ThenBy(c => c.State == TcpState.Established ? 0 : 1)
+            .ThenBy(c => c.LocalPort)
+            .ToArray();
+
+        // Re-clamp here too — Sort might surface this without a refresh having
+        // run, and we want to never index past the end.
+        int maxOffset = Math.Max(0, ordered.Length - ConnectionVisibleRows);
+        if (_scrollOffset > maxOffset) _scrollOffset = maxOffset;
+
+        int shown = Math.Min(ConnectionVisibleRows, ordered.Length - _scrollOffset);
+
+        int hiddenAbove = _scrollOffset;
+        int hiddenBelow = ordered.Length - (_scrollOffset + shown);
+        string scrollSuffix =
+            (hiddenAbove > 0 && hiddenBelow > 0) ? $"   ↑ {hiddenAbove} above · ↓ {hiddenBelow} below " :
+            (hiddenAbove > 0)                    ? $"   ↑ {hiddenAbove} above " :
+            (hiddenBelow > 0)                    ? $"   ↓ {hiddenBelow} below " :
+            "";
+
+        // Single padded header draw — when the count shrinks (100 → 99) or
+        // the scroll indicator disappears, the trailing characters from the
+        // previous frame would otherwise leak through.
+        string header = $" CONNECTIONS ({_connections.Count}) {scrollSuffix}";
+        int headerWidth = Math.Max(0, viewportW - 2);
+        SetAttribute(Theme.AccentAttr);
+        DrawString(2, startY, header.PadRight(headerWidth));
+
+        if (_connections.Count == 0)
+        {
+            SetAttribute(Theme.DimAttr);
+            DrawString(2, startY + 2, " (none) ".PadRight(headerWidth));
+            BlankRows(startY + 1, startY + ConnectionsBlock - 1, viewportW, skipY: startY + 2);
+            return;
+        }
+
+        for (int i = 0; i < shown; i++)
+        {
+            var c = ordered[_scrollOffset + i];
+            int y = startY + 1 + i;
+
+            string proto = $"{(c.Protocol == Protocol.Tcp ? "TCP" : "UDP")}{(c.Family == Bandit.Data.Models.AddressFamily.IPv6 ? "6" : "4")}";
+            string local = FormatEndpoint(c.Local, c.LocalPort);
+            string state = c.State == TcpState.None ? "" : FormatState(c.State);
+
+            // Each column is padded to its full width — Truncate yields a
+            // shorter string when the value is short, so without padding a
+            // previous frame's longer endpoint/state would leak through.
+            const int LocalCol = 30;
+            const int RemoteCol = 30;
+            const int ArrowSpan = 3; // " → "
+
+            SetAttribute(Theme.StatusAttr);
+            DrawString(2, y, $"  {proto,-5}");
+
+            SetAttribute(Theme.AccentAttr);
+            DrawString(9, y, Truncate(local, LocalCol).PadRight(LocalCol));
+
+            // UDP rows have no remote endpoint — the kernel only tracks the
+            // bound local address. Blank the arrow + remote span so a prior
+            // TCP row drawn at this Y doesn't leave residue.
+            if (c.Remote is not null)
+            {
+                SetAttribute(Theme.DimAttr);
+                DrawString(40, y, " → ");
+
+                SetAttribute(Theme.AccentAttr);
+                DrawString(43, y, Truncate(FormatEndpoint(c.Remote, c.RemotePort), RemoteCol).PadRight(RemoteCol));
+            }
+            else
+            {
+                SetAttribute(Theme.DimAttr);
+                DrawString(40, y, new string(' ', ArrowSpan + RemoteCol));
+            }
+
+            SetAttribute(c.State == TcpState.Established ? Theme.UploadAttr : Theme.DimAttr);
+            // Pad to the right edge so any leftover state text from a
+            // previous frame is overwritten.
+            int stateCol = Math.Max(0, viewportW - 74);
+            DrawString(74, y, state.PadRight(stateCol));
+        }
+
+        // When the connection count shrinks between frames the rows below
+        // the new tail still hold stale text. Blank them so the list
+        // doesn't "remember" disappeared sockets.
+        int firstBlankY = startY + 1 + shown;
+        int lastRowY = startY + ConnectionVisibleRows;
+        BlankRows(firstBlankY, lastRowY, viewportW);
+    }
+
+    private void BlankRows(int fromY, int toY, int viewportW, int skipY = int.MinValue)
+    {
+        if (fromY > toY) return;
+        SetAttribute(Theme.StatusAttr);
+        string blank = new(' ', Math.Max(0, viewportW));
+        for (int y = fromY; y <= toY; y++)
+        {
+            if (y == skipY) continue;
+            DrawString(0, y, blank);
+        }
+    }
+
+    private static string FormatEndpoint(System.Net.IPAddress addr, int port)
+    {
+        bool isV6 = addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6;
+        return isV6 ? $"[{addr}]:{port}" : $"{addr}:{port}";
+    }
+
+    private static string FormatState(TcpState state) => state switch
+    {
+        TcpState.Established => "ESTABLISHED",
+        TcpState.Listening   => "LISTENING",
+        TcpState.SynSent     => "SYN_SENT",
+        TcpState.SynReceived => "SYN_RCVD",
+        TcpState.FinWait1    => "FIN_WAIT1",
+        TcpState.FinWait2    => "FIN_WAIT2",
+        TcpState.CloseWait   => "CLOSE_WAIT",
+        TcpState.Closing     => "CLOSING",
+        TcpState.LastAck     => "LAST_ACK",
+        TcpState.TimeWait    => "TIME_WAIT",
+        TcpState.Closed      => "CLOSED",
+        TcpState.DeleteTcb   => "DELETE_TCB",
+        _                    => "",
+    };
+
+    private static string Truncate(string value, int width)
+    {
+        if (value.Length <= width) return value;
+        return value[..(width - 1)] + "…";
     }
 
     private void DrawString(int x, int y, string text)
