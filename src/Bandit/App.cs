@@ -25,6 +25,7 @@ public sealed class App(AppState state) : IDisposable
     private View? _statusBar;
     private View? _activeContent;
     private CommandPalette? _palette;
+    private HelpOverlay? _help;
     private IApplication? _app;
 
     public async Task RunAsync()
@@ -192,8 +193,8 @@ public sealed class App(AppState state) : IDisposable
         }
 
         string hint = state.IsElevated
-            ? "   [ / ] cycle   q:quit "
-            : "   [ / ] cycle   q:quit   [!] Not elevated ";
+            ? "   [ / ] cycle   ?:help   q:quit "
+            : "   [ / ] cycle   ?:help   q:quit   [!] Not elevated ";
         bar.Add(new ColoredLabel(hint, Theme.DimAttr)
         {
             X = x,
@@ -283,6 +284,20 @@ public sealed class App(AppState state) : IDisposable
             // focused TextField inside it consume them.
             if (_palette is not null) return;
 
+            // ? toggles help even when the help overlay is itself focused, so
+            // handle it before the help-open gate below.
+            int rune = key.AsRune.Value;
+            if (rune == '?')
+            {
+                if (_help is null) OpenHelp(); else CloseHelp();
+                key.Handled = true;
+                return;
+            }
+
+            // When the help overlay is open, only its own keys (? to close,
+            // Esc handled by the overlay itself) should fire.
+            if (_help is not null) return;
+
             var code = key.KeyCode;
             if (code == KeyCode.Q || code == (KeyCode.Q | KeyCode.CtrlMask) || code == (KeyCode.C | KeyCode.CtrlMask))
             {
@@ -301,7 +316,6 @@ public sealed class App(AppState state) : IDisposable
                 }
             }
 
-            int rune = key.AsRune.Value;
             if (rune == '[')
             {
                 state.CycleTimescaleDown();
@@ -322,6 +336,24 @@ public sealed class App(AppState state) : IDisposable
                 key.Handled = true;
             }
         };
+    }
+
+    private void OpenHelp()
+    {
+        if (_help is not null || _window is null) return;
+        _help = new HelpOverlay();
+        _help.Closed += (_, _) => CloseHelp();
+        _window.Add(_help);
+        _help.SetFocus();
+    }
+
+    private void CloseHelp()
+    {
+        if (_help is null || _window is null) return;
+        _window.Remove(_help);
+        _help.Dispose();
+        _help = null;
+        _activeContent?.SetFocus();
     }
 
     private void OpenPalette()
