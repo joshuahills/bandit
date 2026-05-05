@@ -7,8 +7,17 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <OptimizeSpeed>true</OptimizeSpeed>
     <RootNamespace>Bandit</RootNamespace>
+
+    <!-- AOT trim feature switches: drop subsystems we don't use so the trimmer
+         can prune their dependencies. Smaller binary + less constant startup
+         work. None of these affect the .NET tool path (managed JIT). -->
+    <EventSourceSupport>false</EventSourceSupport>
+    <DebuggerSupport>false</DebuggerSupport>
+    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+    <HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <StripSymbols>true</StripSymbols>
 
     <!-- AOT and .NET tool packing are mutually exclusive — pack overrides AOT. -->
     <PublishAot Condition="'$(PackAsTool)' != 'true'">true</PublishAot>

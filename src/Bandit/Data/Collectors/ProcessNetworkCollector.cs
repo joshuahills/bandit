@@ -30,22 +30,31 @@ public sealed class ProcessNetworkCollector : INetworkCollector, IDisposable
             return Task.CompletedTask;
         }
 
-        _session = new EtwSession(KernelNetworkEvents.ProviderId, OnEvent);
-        try
+        // EtwSession.Start does StartTrace + EnableTraceEx2 + OpenTrace —
+        // three native syscalls plus kernel session creation, easily 50-150 ms.
+        // Run it on the background thread that hosts the snapshot loop so the
+        // TUI can render before the kernel session is fully up. The Processes
+        // tab's diagnostic state ('Status' + 'StartError') reflects whichever
+        // phase we're in.
+        return Task.Run(async () =>
         {
-            _session.Start();
-            Status = CollectorStatus.Running;
-        }
-        catch (Exception ex)
-        {
-            Status = CollectorStatus.Failed;
-            StartError = ex.Message;
-            _session.Dispose();
-            _session = null;
-            return Task.CompletedTask;
-        }
+            var session = new EtwSession(KernelNetworkEvents.ProviderId, OnEvent);
+            try
+            {
+                session.Start();
+                _session = session;
+                Status = CollectorStatus.Running;
+            }
+            catch (Exception ex)
+            {
+                StartError = ex.Message;
+                Status = CollectorStatus.Failed;
+                session.Dispose();
+                return;
+            }
 
-        return Task.Run(() => SnapshotLoop(ct), ct);
+            await SnapshotLoop(ct).ConfigureAwait(false);
+        }, ct);
     }
 
     private void OnEvent(ref readonly EVENT_RECORD record)
