@@ -166,6 +166,38 @@ public class ConnectionTableTests
     }
 
     [Fact]
+    public void SnapshotForPid_returns_cached_instance_within_ttl()
+    {
+        // Two consecutive calls for the same PID inside the cache TTL should
+        // return the very same list reference — proves the snapshot path
+        // wasn't re-walked.
+        ConnectionTable.ResetCache();
+        int pid = Environment.ProcessId;
+        var first = ConnectionTable.SnapshotForPid(pid);
+        var second = ConnectionTable.SnapshotForPid(pid);
+        Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void SnapshotForPid_invalidates_cache_for_a_different_pid()
+    {
+        ConnectionTable.ResetCache();
+        var first  = ConnectionTable.SnapshotForPid(Environment.ProcessId);
+        var second = ConnectionTable.SnapshotForPid(Environment.ProcessId + 1);
+        Assert.NotSame(first, second);
+    }
+
+    [Fact]
+    public void ResetCache_forces_a_fresh_snapshot()
+    {
+        int pid = Environment.ProcessId;
+        var first = ConnectionTable.SnapshotForPid(pid);
+        ConnectionTable.ResetCache();
+        var second = ConnectionTable.SnapshotForPid(pid);
+        Assert.NotSame(first, second);
+    }
+
+    [Fact]
     public void BuildUdp6_has_no_remote()
     {
         var addr = default(InlineByte16);

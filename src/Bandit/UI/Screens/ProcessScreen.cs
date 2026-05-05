@@ -535,12 +535,24 @@ internal sealed class ProcessDetail : View
         {
             X = 0, Y = 6,
             Width = Dim.Fill(),
-            // Leave room for the connections block at the bottom.
-            Height = Dim.Fill(ConnectionsBlock),
+            // Reserve the connections block at the bottom only when the
+            // viewport is tall enough to actually render it. On short
+            // terminals the connections block self-hides (see
+            // DrawConnections), and we hand that 12-row margin back to
+            // the chart so it doesn't collapse to a blank gap.
+            Height = Dim.Func(parent =>
+            {
+                int h = parent.Viewport.Height;
+                return h >= ChartY + 1 + ConnectionsBlock
+                    ? h - ChartY - ConnectionsBlock
+                    : Math.Max(1, h - ChartY);
+            }, this),
         };
         Add(_chart);
         KeyDown += OnDetailKey;
     }
+
+    private const int ChartY = 6;
 
     public void UpdateData(
         string name,
@@ -671,28 +683,41 @@ internal sealed class ProcessDetail : View
             string local = FormatEndpoint(c.Local, c.LocalPort);
             string state = c.State == TcpState.None ? "" : FormatState(c.State);
 
+            // Each column is padded to its full width — Truncate yields a
+            // shorter string when the value is short, so without padding a
+            // previous frame's longer endpoint/state would leak through.
+            const int LocalCol = 30;
+            const int RemoteCol = 30;
+            const int ArrowSpan = 3; // " → "
+
             SetAttribute(Theme.StatusAttr);
             DrawString(2, y, $"  {proto,-5}");
 
             SetAttribute(Theme.AccentAttr);
-            DrawString(9, y, Truncate(local, 30));
+            DrawString(9, y, Truncate(local, LocalCol).PadRight(LocalCol));
 
             // UDP rows have no remote endpoint — the kernel only tracks the
-            // bound local address. Skip the arrow + remote column for them
-            // so the row reads as just "UDP4  0.0.0.0:5353".
+            // bound local address. Blank the arrow + remote span so a prior
+            // TCP row drawn at this Y doesn't leave residue.
             if (c.Remote is not null)
             {
                 SetAttribute(Theme.DimAttr);
                 DrawString(40, y, " → ");
 
                 SetAttribute(Theme.AccentAttr);
-                DrawString(43, y, Truncate(FormatEndpoint(c.Remote, c.RemotePort), 30));
+                DrawString(43, y, Truncate(FormatEndpoint(c.Remote, c.RemotePort), RemoteCol).PadRight(RemoteCol));
+            }
+            else
+            {
+                SetAttribute(Theme.DimAttr);
+                DrawString(40, y, new string(' ', ArrowSpan + RemoteCol));
             }
 
             SetAttribute(c.State == TcpState.Established ? Theme.UploadAttr : Theme.DimAttr);
-            DrawString(74, y, state);
-
-            _ = viewportW; // Dynamic-width layout lands in PR #22.
+            // Pad to the right edge so any leftover state text from a
+            // previous frame is overwritten.
+            int stateCol = Math.Max(0, viewportW - 74);
+            DrawString(74, y, state.PadRight(stateCol));
         }
 
         // Scroll indicators replace the old 'and N more' line.
