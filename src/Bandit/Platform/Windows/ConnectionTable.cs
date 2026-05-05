@@ -10,10 +10,19 @@ namespace Bandit.Platform.Windows;
 
 internal static class ConnectionTable
 {
+    // Cap on how many times we'll retry a table fetch when the kernel reports
+    // ERROR_INSUFFICIENT_BUFFER mid-call (i.e. the table grew between probe
+    // and fetch). 5 is generous — in practice one retry is enough; we just
+    // want a hard ceiling so we never spin on a pathologically churny system.
+    private const int MaxResizeRetries = 5;
+
     /// <summary>
     /// Snapshot of every TCP/UDP × IPv4/IPv6 connection currently owned by
-    /// <paramref name="pid"/>. Returns an empty list if the process has no
-    /// open sockets or any of the underlying iphlpapi calls fail.
+    /// <paramref name="pid"/>. Each table is queried independently; if one
+    /// of the underlying iphlpapi calls fails (e.g. the kernel keeps growing
+    /// the table faster than we can size and copy it) the rows from that
+    /// table are skipped while the rest are still returned. Worst case is an
+    /// empty list when every table fails.
     /// </summary>
     public static IReadOnlyList<ProcessConnection> SnapshotForPid(int pid)
     {
@@ -27,15 +36,12 @@ internal static class ConnectionTable
 
     private static unsafe void AppendTcp(List<ProcessConnection> list, uint family, int filterPid)
     {
-        uint size = 0;
-        GetExtendedTcpTable(IntPtr.Zero, ref size, false, family, TCP_TABLE_OWNER_PID_ALL, 0);
-        if (size == 0) return;
+        if (!FetchTable((IntPtr buf, ref uint sz) => GetExtendedTcpTable(buf, ref sz, false, family, TCP_TABLE_OWNER_PID_ALL, 0),
+                         out var buffer))
+            return;
 
-        var buffer = Marshal.AllocHGlobal((int)size);
         try
         {
-            if (GetExtendedTcpTable(buffer, ref size, false, family, TCP_TABLE_OWNER_PID_ALL, 0) != NO_ERROR) return;
-
             byte* p = (byte*)buffer;
             int entryCount = *(int*)p;
 
@@ -68,15 +74,12 @@ internal static class ConnectionTable
 
     private static unsafe void AppendUdp(List<ProcessConnection> list, uint family, int filterPid)
     {
-        uint size = 0;
-        GetExtendedUdpTable(IntPtr.Zero, ref size, false, family, UDP_TABLE_OWNER_PID, 0);
-        if (size == 0) return;
+        if (!FetchTable((IntPtr buf, ref uint sz) => GetExtendedUdpTable(buf, ref sz, false, family, UDP_TABLE_OWNER_PID, 0),
+                         out var buffer))
+            return;
 
-        var buffer = Marshal.AllocHGlobal((int)size);
         try
         {
-            if (GetExtendedUdpTable(buffer, ref size, false, family, UDP_TABLE_OWNER_PID, 0) != NO_ERROR) return;
-
             byte* p = (byte*)buffer;
             int entryCount = *(int*)p;
 
@@ -107,6 +110,41 @@ internal static class ConnectionTable
         }
     }
 
+    private delegate uint TableFetcher(IntPtr buffer, ref uint size);
+
+    /// <summary>
+    /// Probe-then-fetch with a bounded retry loop. The kernel can grow the
+    /// connection table between the size probe and the populated read; when
+    /// that happens the second call returns ERROR_INSUFFICIENT_BUFFER along
+    /// with the new required size, and we re-allocate and try again. Without
+    /// the loop, busy systems silently lose entire snapshots.
+    /// </summary>
+    private static bool FetchTable(TableFetcher fetch, out IntPtr buffer)
+    {
+        buffer = IntPtr.Zero;
+        uint size = 0;
+
+        // Initial probe — this is expected to return ERROR_INSUFFICIENT_BUFFER
+        // and write the required size into `size`.
+        fetch(IntPtr.Zero, ref size);
+        if (size == 0) return false;
+
+        for (int attempt = 0; attempt < MaxResizeRetries; attempt++)
+        {
+            buffer = Marshal.AllocHGlobal((int)size);
+            uint rc = fetch(buffer, ref size);
+            if (rc == NO_ERROR) return true;
+
+            Marshal.FreeHGlobal(buffer);
+            buffer = IntPtr.Zero;
+
+            // Only retry if the kernel told us to grow the buffer. Anything
+            // else is a real error and we give up.
+            if (rc != ERROR_INSUFFICIENT_BUFFER) return false;
+        }
+        return false;
+    }
+
     internal static ProcessConnection BuildTcp4(MIB_TCPROW_OWNER_PID row) =>
         new(
             Pid:        (int)row.dwOwningPid,
@@ -123,9 +161,9 @@ internal static class ConnectionTable
             Pid:        (int)row.dwOwningPid,
             Protocol:   Protocol.Tcp,
             Family:     AddressFamily.IPv6,
-            Local:      ToIPv6(row.ucLocalAddr),
+            Local:      ToIPv6(row.ucLocalAddr,  row.dwLocalScopeId),
             LocalPort:  ExtractPort(row.dwLocalPort),
-            Remote:     ToIPv6(row.ucRemoteAddr),
+            Remote:     ToIPv6(row.ucRemoteAddr, row.dwRemoteScopeId),
             RemotePort: ExtractPort(row.dwRemotePort),
             State:      ToTcpState((int)row.dwState));
 
@@ -145,7 +183,7 @@ internal static class ConnectionTable
             Pid:        (int)row.dwOwningPid,
             Protocol:   Protocol.Udp,
             Family:     AddressFamily.IPv6,
-            Local:      ToIPv6(row.ucLocalAddr),
+            Local:      ToIPv6(row.ucLocalAddr, row.dwLocalScopeId),
             LocalPort:  ExtractPort(row.dwLocalPort),
             Remote:     null,
             RemotePort: 0,
@@ -157,10 +195,16 @@ internal static class ConnectionTable
     internal static TcpState ToTcpState(int state) =>
         state is >= 1 and <= 12 ? (TcpState)state : TcpState.None;
 
-    private static IPAddress ToIPv6(InlineByte16 inlineAddr)
+    /// <summary>
+    /// Builds an IPv6 <see cref="IPAddress"/> with the original scope ID
+    /// preserved. Without this, link-local sockets (fe80::%N) collapse to a
+    /// scope-less address and distinct connections on different interfaces
+    /// can render as duplicates in the UI.
+    /// </summary>
+    internal static IPAddress ToIPv6(InlineByte16 inlineAddr, uint scopeId)
     {
         var bytes = new byte[16];
         for (int i = 0; i < 16; i++) bytes[i] = inlineAddr[i];
-        return new IPAddress(bytes);
+        return new IPAddress(bytes, scopeId);
     }
 }

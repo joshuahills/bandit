@@ -117,6 +117,55 @@ public class ConnectionTableTests
     }
 
     [Fact]
+    public void BuildTcp6_preserves_scope_ids_for_link_local_addresses()
+    {
+        // fe80::1 — link-local address. Without a scope ID the framework
+        // can't distinguish two such sockets bound on different interfaces,
+        // and they collapse to a single endpoint in the UI.
+        var addr = default(InlineByte16);
+        addr[0] = 0xFE; addr[1] = 0x80;
+        addr[15] = 0x01;
+
+        var row = new MIB_TCP6ROW_OWNER_PID
+        {
+            ucLocalAddr     = addr,
+            dwLocalScopeId  = 17,
+            dwLocalPort     = 0x5000,
+            ucRemoteAddr    = addr,
+            dwRemoteScopeId = 17,
+            dwRemotePort    = 0xBB01,
+            dwState         = 5,
+            dwOwningPid     = 1,
+        };
+
+        var conn = ConnectionTable.BuildTcp6(row);
+
+        Assert.Equal(17L, conn.Local.ScopeId);
+        Assert.NotNull(conn.Remote);
+        Assert.Equal(17L, conn.Remote!.ScopeId);
+    }
+
+    [Fact]
+    public void BuildUdp6_preserves_scope_id()
+    {
+        var addr = default(InlineByte16);
+        addr[0] = 0xFE; addr[1] = 0x80;
+        addr[15] = 0x05;
+
+        var row = new MIB_UDP6ROW_OWNER_PID
+        {
+            ucLocalAddr    = addr,
+            dwLocalScopeId = 9,
+            dwLocalPort    = 0xE914,
+            dwOwningPid    = 42,
+        };
+
+        var conn = ConnectionTable.BuildUdp6(row);
+
+        Assert.Equal(9L, conn.Local.ScopeId);
+    }
+
+    [Fact]
     public void BuildUdp6_has_no_remote()
     {
         var addr = default(InlineByte16);
