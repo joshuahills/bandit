@@ -16,22 +16,59 @@ internal static class ConnectionTable
     // want a hard ceiling so we never spin on a pathologically churny system.
     private const int MaxResizeRetries = 5;
 
+    // Cache the most recent per-PID snapshot for a brief window so repeated
+    // calls within a single UI tick (or within the natural ~1 Hz refresh
+    // cadence) don't re-walk all four kernel tables. Each call walks the
+    // entire system's connection set and only filters to PID afterwards, so
+    // the cost scales with total host activity, not just this process.
+    private const int CacheTtlMs = 750;
+    private static readonly object CacheGate = new();
+    private static int _cachedPid = -1;
+    private static long _cachedAtTicks;
+    private static IReadOnlyList<ProcessConnection>? _cachedSnapshot;
+
     /// <summary>
     /// Snapshot of every TCP/UDP × IPv4/IPv6 connection currently owned by
     /// <paramref name="pid"/>. Each table is queried independently; if one
     /// of the underlying iphlpapi calls fails (e.g. the kernel keeps growing
     /// the table faster than we can size and copy it) the rows from that
     /// table are skipped while the rest are still returned. Worst case is an
-    /// empty list when every table fails.
+    /// empty list when every table fails. Results are cached briefly per PID
+    /// to keep redraws cheap on hosts with large connection counts.
     /// </summary>
     public static IReadOnlyList<ProcessConnection> SnapshotForPid(int pid)
     {
+        long now = Environment.TickCount64;
+        lock (CacheGate)
+        {
+            if (_cachedPid == pid && _cachedSnapshot is not null && now - _cachedAtTicks < CacheTtlMs)
+                return _cachedSnapshot;
+        }
+
         var result = new List<ProcessConnection>();
         AppendTcp(result, AF_INET, pid);
         AppendTcp(result, AF_INET6, pid);
         AppendUdp(result, AF_INET, pid);
         AppendUdp(result, AF_INET6, pid);
+
+        lock (CacheGate)
+        {
+            _cachedPid = pid;
+            _cachedAtTicks = now;
+            _cachedSnapshot = result;
+        }
         return result;
+    }
+
+    /// <summary>Clears the per-PID snapshot cache. Test-only.</summary>
+    internal static void ResetCache()
+    {
+        lock (CacheGate)
+        {
+            _cachedPid = -1;
+            _cachedAtTicks = 0;
+            _cachedSnapshot = null;
+        }
     }
 
     private static unsafe void AppendTcp(List<ProcessConnection> list, uint family, int filterPid)

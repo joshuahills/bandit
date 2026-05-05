@@ -626,7 +626,14 @@ internal sealed class ProcessDetail : View
     {
         int viewportH = Viewport.Height;
         int viewportW = Viewport.Width;
-        if (viewportH <= ConnectionsBlock) return;
+
+        // Header takes rows 0–4, the bandwidth chart starts at Y=6 and reserves
+        // ConnectionsBlock rows at the bottom for us. If the terminal is too
+        // short, the connections block would crash up into the header/chart
+        // area. Hide it entirely below this threshold rather than overdraw.
+        const int HeaderRows = 6;       // 5 header lines + 1 gap before chart
+        const int MinChartRows = 1;
+        if (viewportH < HeaderRows + MinChartRows + ConnectionsBlock) return;
 
         int startY = viewportH - ConnectionsBlock + 1;
 
@@ -662,7 +669,6 @@ internal sealed class ProcessDetail : View
 
             string proto = $"{(c.Protocol == Protocol.Tcp ? "TCP" : "UDP")}{(c.Family == Bandit.Data.Models.AddressFamily.IPv6 ? "6" : "4")}";
             string local = FormatEndpoint(c.Local, c.LocalPort);
-            string remote = c.Remote is null ? "" : FormatEndpoint(c.Remote, c.RemotePort);
             string state = c.State == TcpState.None ? "" : FormatState(c.State);
 
             SetAttribute(Theme.StatusAttr);
@@ -671,17 +677,22 @@ internal sealed class ProcessDetail : View
             SetAttribute(Theme.AccentAttr);
             DrawString(9, y, Truncate(local, 30));
 
-            SetAttribute(Theme.DimAttr);
-            DrawString(40, y, " → ");
+            // UDP rows have no remote endpoint — the kernel only tracks the
+            // bound local address. Skip the arrow + remote column for them
+            // so the row reads as just "UDP4  0.0.0.0:5353".
+            if (c.Remote is not null)
+            {
+                SetAttribute(Theme.DimAttr);
+                DrawString(40, y, " → ");
 
-            SetAttribute(Theme.AccentAttr);
-            DrawString(43, y, Truncate(remote, 30));
+                SetAttribute(Theme.AccentAttr);
+                DrawString(43, y, Truncate(FormatEndpoint(c.Remote, c.RemotePort), 30));
+            }
 
             SetAttribute(c.State == TcpState.Established ? Theme.UploadAttr : Theme.DimAttr);
             DrawString(74, y, state);
 
-            // Truncate the row to viewport width to avoid overflow.
-            _ = viewportW;
+            _ = viewportW; // Dynamic-width layout lands in PR #22.
         }
 
         // Scroll indicators replace the old 'and N more' line.
