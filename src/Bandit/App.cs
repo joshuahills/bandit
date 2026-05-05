@@ -341,7 +341,7 @@ public sealed class App(AppState state) : IDisposable
     private void OpenHelp()
     {
         if (_help is not null || _window is null) return;
-        _help = new HelpOverlay();
+        _help = new HelpOverlay(_screens.Length);
         _help.Closed += (_, _) => CloseHelp();
         _window.Add(_help);
         _help.SetFocus();

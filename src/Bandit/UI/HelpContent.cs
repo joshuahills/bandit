@@ -13,27 +13,36 @@ public static class HelpContent
     /// <summary>
     /// Section + key-binding rows shown in the <see cref="HelpOverlay"/>.
     /// Slash-command rows are sourced from <see cref="CommandRegistry"/> so a
-    /// new verb registered there shows up in help automatically.
+    /// new verb registered there shows up in help automatically. The digit
+    /// range in the GLOBAL section adapts to the actual number of registered
+    /// screens so it never advertises shortcuts that no-op.
     /// </summary>
-    public static IReadOnlyList<HelpLine> Lines { get; } = Build();
-
-    private static IReadOnlyList<HelpLine> Build()
+    public static IReadOnlyList<HelpLine> Build(int screenCount)
     {
+        string digitKeys = screenCount switch
+        {
+            <= 1 => "  1",
+            2    => "  1 · 2",
+            _    => $"  1 – {Math.Min(screenCount, 9)}",
+        };
+
         var lines = new List<HelpLine>
         {
             new("GLOBAL", "", IsHeader: true),
-            new("  1 – 9",          "Switch screen",        false),
-            new("  [ / ]",          "Cycle timescale",      false),
-            new("  /",              "Open command palette", false),
-            new("  ?",              "Toggle this help",     false),
-            new("  q · Ctrl+C",     "Quit",                 false),
+            new(digitKeys,           "Switch screen",        false),
+            new("  [ / ]",           "Cycle timescale",      false),
+            new("  /",               "Open command palette", false),
+            new("  ?",               "Toggle this help",     false),
+            new("  q · Ctrl+C",      "Quit",                 false),
             new("", "", false),
 
             new("PROCESSES", "", IsHeader: true),
-            new("  ↑ ↓ Home End",   "Navigate selection",  false),
-            new("  Enter · 2-click","Open process detail", false),
-            new("  Esc · Backspace","Back to table",       false),
-            new("  Click header",   "Sort by column",      false),
+            new("  ↑ ↓",                "Navigate selection",        false),
+            new("  Home · End",         "Jump to first / last",      false),
+            new("  PgUp · PgDn",        "Page through the list",     false),
+            new("  Enter · 2-click",    "Open process detail",       false),
+            new("  Esc · Backspace",    "Back to table",             false),
+            new("  Click header",       "Sort by column",            false),
             new("", "", false),
 
             new("COMMANDS", "", IsHeader: true),

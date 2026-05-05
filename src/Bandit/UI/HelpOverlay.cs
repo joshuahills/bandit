@@ -9,13 +9,33 @@ namespace Bandit.UI;
 
 internal sealed class HelpOverlay : Window
 {
+    private const int KeyColumnWidth = 24;
+    private const int Padding = 4;          // chars of slack on the right of the longest line
+    private const int Border = 2;           // window left + right border chars
+    private const int BottomChrome = 2;     // border + the 'press ? or Esc' footer
+
     public event EventHandler? Closed;
 
-    public HelpOverlay()
+    private readonly IReadOnlyList<HelpLine> _lines;
+
+    public HelpOverlay(int screenCount)
     {
+        _lines = HelpContent.Build(screenCount);
+
+        // Size to the actual content so the longest description / verb hint
+        // never crops or crowds the border.
+        int longest = 0;
+        foreach (var line in _lines)
+        {
+            int width = line.IsHeader
+                ? line.Keys.Length
+                : KeyColumnWidth + line.Description.Length;
+            if (width > longest) longest = width;
+        }
+
         Title = " help ";
-        Width = 64;
-        Height = HelpContent.Lines.Count + 2 + 2;
+        Width = longest + Padding + Border;
+        Height = _lines.Count + BottomChrome + 1;
         X = Pos.Center();
         Y = Pos.Center();
         BorderStyle = LineStyle.Rounded;
@@ -35,12 +55,9 @@ internal sealed class HelpOverlay : Window
 
     protected override bool OnDrawingContent(DrawContext? context)
     {
-        const int keyWidth = 24;
-
-        var lines = HelpContent.Lines;
-        for (int i = 0; i < lines.Count; i++)
+        for (int i = 0; i < _lines.Count; i++)
         {
-            var line = lines[i];
+            var line = _lines[i];
             int y = i;
 
             if (line.IsHeader)
@@ -53,13 +70,13 @@ internal sealed class HelpOverlay : Window
             if (string.IsNullOrEmpty(line.Keys) && string.IsNullOrEmpty(line.Description)) continue;
 
             SetAttribute(line.KeyAttribute);
-            DrawString(1, y, line.Keys.PadRight(keyWidth));
+            DrawString(1, y, line.Keys.PadRight(KeyColumnWidth));
             SetAttribute(Theme.StatusAttr);
-            DrawString(1 + keyWidth, y, line.Description);
+            DrawString(1 + KeyColumnWidth, y, line.Description);
         }
 
         SetAttribute(Theme.DimAttr);
-        DrawString(1, lines.Count + 1, " press ? or Esc to close ");
+        DrawString(1, _lines.Count + 1, " press ? or Esc to close ");
 
         return true;
     }
