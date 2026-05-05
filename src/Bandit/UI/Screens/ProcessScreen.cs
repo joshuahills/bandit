@@ -515,6 +515,7 @@ internal sealed class ProcessTable : View
 internal sealed class ProcessDetail : View
 {
     private const int ConnectionsBlock = 12;  // header + 1 spacer + ~10 rows
+    private const int ConnectionVisibleRows = ConnectionsBlock - 2;
 
     public int Pid { get; }
     public event EventHandler? Back;
@@ -523,6 +524,7 @@ internal sealed class ProcessDetail : View
     private long _liveIn, _liveOut, _totalIn, _totalOut;
     private string _windowLabel = "";
     private IReadOnlyList<ProcessConnection> _connections = Array.Empty<ProcessConnection>();
+    private int _scrollOffset;
     private readonly BandwidthChart _chart;
 
     public ProcessDetail(int pid)
@@ -556,6 +558,11 @@ internal sealed class ProcessDetail : View
         _totalOut = totalOut;
         _windowLabel = windowLabel;
         _connections = connections;
+
+        // Re-clamp scroll position in case the new snapshot has fewer rows.
+        int max = Math.Max(0, _connections.Count - ConnectionVisibleRows);
+        if (_scrollOffset > max) _scrollOffset = max;
+
         _chart.Samples = history;
         _chart.TimescaleSeconds = timescaleSeconds;
         _chart.SetNeedsDraw();
@@ -567,6 +574,31 @@ internal sealed class ProcessDetail : View
         if (key.KeyCode == KeyCode.Esc || key.KeyCode == KeyCode.Backspace)
         {
             Back?.Invoke(this, EventArgs.Empty);
+            key.Handled = true;
+            return;
+        }
+
+        int max = Math.Max(0, _connections.Count - ConnectionVisibleRows);
+        int? newOffset = key.KeyCode switch
+        {
+            KeyCode.CursorUp   => Math.Max(0,   _scrollOffset - 1),
+            KeyCode.CursorDown => Math.Min(max, _scrollOffset + 1),
+            KeyCode.PageUp     => Math.Max(0,   _scrollOffset - ConnectionVisibleRows),
+            KeyCode.PageDown   => Math.Min(max, _scrollOffset + ConnectionVisibleRows),
+            KeyCode.Home       => 0,
+            KeyCode.End        => max,
+            _                  => null,
+        };
+
+        if (newOffset is { } offset && offset != _scrollOffset)
+        {
+            _scrollOffset = offset;
+            SetNeedsDraw();
+            key.Handled = true;
+        }
+        else if (newOffset is not null)
+        {
+            // Already at limit — still consume the key so it doesn't bubble.
             key.Handled = true;
         }
     }
@@ -616,12 +648,16 @@ internal sealed class ProcessDetail : View
             .ThenBy(c => c.LocalPort)
             .ToArray();
 
-        int maxRows = ConnectionsBlock - 2;
-        int shown = Math.Min(ordered.Length, maxRows);
+        // Re-clamp here too — Sort might surface this without a refresh having
+        // run, and we want to never index past the end.
+        int maxOffset = Math.Max(0, ordered.Length - ConnectionVisibleRows);
+        if (_scrollOffset > maxOffset) _scrollOffset = maxOffset;
+
+        int shown = Math.Min(ConnectionVisibleRows, ordered.Length - _scrollOffset);
 
         for (int i = 0; i < shown; i++)
         {
-            var c = ordered[i];
+            var c = ordered[_scrollOffset + i];
             int y = startY + 1 + i;
 
             string proto = $"{(c.Protocol == Protocol.Tcp ? "TCP" : "UDP")}{(c.Family == Bandit.Data.Models.AddressFamily.IPv6 ? "6" : "4")}";
@@ -648,10 +684,23 @@ internal sealed class ProcessDetail : View
             _ = viewportW;
         }
 
-        if (ordered.Length > shown)
+        // Scroll indicators replace the old 'and N more' line.
+        SetAttribute(Theme.DimAttr);
+        int hidden_above = _scrollOffset;
+        int hidden_below = ordered.Length - (_scrollOffset + shown);
+
+        if (hidden_above > 0 || hidden_below > 0)
         {
-            SetAttribute(Theme.DimAttr);
-            DrawString(2, startY + 1 + shown, $"  …and {ordered.Length - shown} more ");
+            string headerSuffix;
+            if (hidden_above > 0 && hidden_below > 0)
+                headerSuffix = $"   ↑ {hidden_above} above · ↓ {hidden_below} below ";
+            else if (hidden_above > 0)
+                headerSuffix = $"   ↑ {hidden_above} above ";
+            else
+                headerSuffix = $"   ↓ {hidden_below} below ";
+
+            int suffixX = 2 + $" CONNECTIONS ({_connections.Count}) ".Length;
+            DrawString(suffixX, startY, headerSuffix);
         }
     }
 
